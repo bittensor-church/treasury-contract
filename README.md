@@ -1,36 +1,66 @@
-# Bittensor Subnet Treasury System (BACT)
+## Foundry
 
-## Project Overview
-The Bittensor Treasury system is a decentralized governance framework designed to allow subnets to autonomously **accumulate, manage, and spend Alpha/TAO tokens**. It ensures that treasury funds are managed transparently by the subnet validators, with voting power directly linked to their **EMA Stake**.
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
-## Architecture: The Adapter Pattern
-The system follows a modular "Adapter Pattern" to separate fund custody from governance logic. This maximizes security by using audited standards while allowing for Bittensor-specific customizations.
+Foundry consists of:
 
-### 1. Treasury Vault (The "Safe")
-* **Role:** Acts as the secure storage for all accumulated Alpha/TAO.
-* **Base:** Built on the **OpenZeppelin TimelockController**.
-* **Identity:** Registered as a **Miner/Neuron** via the `NEURON_PRECOMPILE`. This allows the contract to receive incentives directly from the subnet.
-* **Security:** Enforces a mandatory time delay (e.g., 24h) between the approval of a spend motion and its actual execution.
+- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
+- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
+- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
 
-### 2. Treasury Controller (The "Brain")
-* **Role:** Manages the proposal lifecycle and voting logic.
-* **Voting Mechanism:** Queries the **Bittensor Voting Power (EMA Stake)** via a custom `IVotes` interface.
-* **Authorization:** Once a proposal reaches the required **Quorum (e.g., 51% of total stake)**, it triggers the Vault's execution queue.
+## Documentation
 
+https://book.getfoundry.sh/
 
+## Usage
 
----
+### Build
 
-## Core Features
-- **Neuron Registration:** Supports `burnedRegister` to allow the Treasury to participate in the subnet as a miner.
-- **Voluntary Donations:** Open for contributions from any SS58 or H160 address.
-- **Stake-Weighted Governance:** Voting power is proportional to the validator's stake, ensuring those with the most "skin in the game" lead the decision-making.
-- **Cross-Chain Addressing:** Handles interaction between EVM (H160) and Subtensor (SS58) for fund disbursements.
+```shell
+$ forge build
+```
 
----
+### Test
 
-## Operational Flow
-1.  **Propose:** A validator creates a proposal to send funds to a specific SS58 address.
-2.  **Vote:** Validators cast votes; weights are calculated based on their EMA Stake at the time of the proposal.
-3.  **Queue:** Upon reaching quorum, the proposal is moved to the Timelock Vault.
-4.  **Execute:** After the timelock period expires, the funds are released to the destination address.
+```shell
+$ forge test
+```
+
+### Format
+
+```shell
+$ forge fmt
+```
+
+### Gas Snapshots
+
+```shell
+$ forge snapshot
+```
+
+### Anvil
+
+```shell
+$ anvil
+```
+
+### Deploy
+
+```shell
+$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+```
+
+### Cast
+
+```shell
+$ cast <subcommand>
+```
+
+### Help
+
+```shell
+$ forge --help
+$ anvil --help
+$ cast --help
+```
