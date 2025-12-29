@@ -27,7 +27,10 @@ contract TreasuryController is
         uint16 _netuid
     )
     Governor("BittensorDAO")
-    GovernorSettings(1 days, 5 days, 100e9)
+    // 0 = Start głosowania od razu (Voting Delay)
+    // 10 = Głosowanie trwa 10 bloków (~2 minuty) (Voting Period)
+    // 100e9 = Próg 100 tokenów, żeby założyć propozycję (Proposal Threshold)
+    GovernorSettings(0, 10, 100e9)
     GovernorVotes(_token)
     GovernorVotesQuorumFraction(4) // Ustawiamy Quorum na 4%
     GovernorTimelockControl(_timelock)
