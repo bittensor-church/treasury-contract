@@ -5,7 +5,6 @@ import "forge-std/Script.sol";
 import {TreasuryVault} from "../src/vault/TreasuryVault.sol";
 import {TreasuryController} from "../src/controller/TreasuryController.sol";
 import {MockBittensorVotes} from "../src/mocks/MockBittensorVotes.sol";
-import {IVotes} from "lib/openzeppelin-contracts/contracts/governance/utils/IVotes.sol";
 
 contract DeployGovernance is Script {
     function run() external {
@@ -35,7 +34,6 @@ contract DeployGovernance is Script {
 
         // 3. Governor
         TreasuryController governor = new TreasuryController(
-            IVotes(votesAddress),
             vault,
             votesAddress,
             1
