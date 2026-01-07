@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "forge-std/Script.sol";
-import {TreasuryVault} from "../src/vault/TreasuryVault.sol";
-import {TreasuryController} from "../src/controller/TreasuryController.sol";
-import {MockBittensorVotes} from "../src/mocks/MockBittensorVotes.sol";
+import { Script } from "forge-std/Script.sol";
+import { console } from "forge-std/console.sol"; // <--- BRAKOWAŁO TEGO IMPORTU
+import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
+import { TreasuryController } from "../src/controller/TreasuryController.sol";
+import { MockBittensorVotes } from "../src/mocks/MockBittensorVotes.sol";
 
 contract DeployGovernance is Script {
     function run() external {
@@ -40,11 +41,11 @@ contract DeployGovernance is Script {
         );
 
         // 4. Permissions
-        bytes32 PROPOSER_ROLE = vault.PROPOSER_ROLE();
-        bytes32 ADMIN_ROLE = vault.DEFAULT_ADMIN_ROLE();
+        bytes32 proposerRole = vault.PROPOSER_ROLE();
+        bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
 
-        vault.grantRole(PROPOSER_ROLE, address(governor));
-        vault.renounceRole(ADMIN_ROLE, deployerAddress);
+        vault.grantRole(proposerRole, address(governor));
+        vault.renounceRole(adminRole, deployerAddress);
 
         vm.stopBroadcast();
         console.log("--------------------------------------------------");

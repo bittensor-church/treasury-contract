@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "lib/openzeppelin-contracts/contracts/governance/Governor.sol";
-import "lib/openzeppelin-contracts/contracts/governance/extensions/GovernorSettings.sol";
-import "lib/openzeppelin-contracts/contracts/governance/extensions/GovernorTimelockControl.sol";
-import "../interfaces/IBittensorVotes.sol";
+import { Governor } from "lib/openzeppelin-contracts/contracts/governance/Governor.sol";
+import { GovernorSettings } from "lib/openzeppelin-contracts/contracts/governance/extensions/GovernorSettings.sol";
+import { GovernorTimelockControl } from "lib/openzeppelin-contracts/contracts/governance/extensions/GovernorTimelockControl.sol";
+import { TimelockController } from "lib/openzeppelin-contracts/contracts/governance/TimelockController.sol";
+import { IBittensorVotes } from "../interfaces/IBittensorVotes.sol";
 
 contract TreasuryController is
     Governor,
     GovernorSettings,
     GovernorTimelockControl
 {
-    IBittensorVotes public immutable bittensorVotes;
-    uint16 public immutable targetNetuid;
+    // Zmiana na SCREAMING_SNAKE_CASE dla zmiennych immutable
+    IBittensorVotes public immutable BITTENSOR_VOTES;
+    uint16 public immutable TARGET_NETUID;
 
     uint256 public constant TOTAL_SUPPLY_BITTENSOR = 100_000 * 1e9;
     uint256 public constant QUORUM_PERCENT = 4;
@@ -36,11 +38,11 @@ contract TreasuryController is
     GovernorSettings(0, 10, 100e9)
     GovernorTimelockControl(_timelock)
     {
-        bittensorVotes = IBittensorVotes(_bittensorVotes);
-        targetNetuid = _netuid;
+        BITTENSOR_VOTES = IBittensorVotes(_bittensorVotes);
+        TARGET_NETUID = _netuid;
     }
 
-    // --- Implementacja brakujących funkcji zegara (IERC6372) ---
+    // --- Zegar (IERC6372) ---
 
     function clock() public view virtual override returns (uint48) {
         return uint48(block.number);
@@ -51,8 +53,9 @@ contract TreasuryController is
         return "mode=blocknumber&from=default";
     }
 
-    // --- Implementacja wymaganych funkcji Governor ---
+    // --- Implementacja Governor ---
 
+    // solhint-disable-next-line func-name-mixedcase
     function COUNTING_MODE() public pure virtual override returns (string memory) {
         return "support=bravo&quorum=for,against";
     }
@@ -62,22 +65,21 @@ contract TreasuryController is
     }
 
     /**
-     * @dev Ponieważ robimy iterację w ostatnim kroku, ta funkcja musi istnieć,
-     * ale w Twoim modelu nie jest używana do zliczania w czasie rzeczywistym.
+     * @dev Pobiera siłę głosu (Alfy) z kontraktu BittensorVotes dla danego netuid.
      */
     function _getVotes(
         address account,
         uint256 /*timepoint*/,
         bytes memory /*params*/
     ) internal view virtual override returns (uint256) {
-        return bittensorVotes.getVotingPower(targetNetuid, bytes32(uint256(uint160(account))));
+        return BITTENSOR_VOTES.getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(account))));
     }
 
     function quorum(uint256 /* timepoint */) public view virtual override returns (uint256) {
         return (TOTAL_SUPPLY_BITTENSOR * QUORUM_PERCENT) / 100;
     }
 
-    // --- Logika zapisu głosów (tylko adres i typ) ---
+    // --- Logika zapisu głosów ---
 
     function _countVote(
         uint256 proposalId,
@@ -95,14 +97,14 @@ contract TreasuryController is
         tally.support[account] = support + 1;
     }
 
-    // --- Pobieranie wag w ostatnim kroku (Iteracja) ---
+    // --- Przeliczanie wyników (Iteracja) ---
 
     function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes, uint256 againstVotes) {
         ProposalTallies storage tally = _proposalTallies[proposalId];
 
         for (uint256 i = 0; i < tally.voters.length; i++) {
             address voter = tally.voters[i];
-            uint256 weight = bittensorVotes.getVotingPower(targetNetuid, bytes32(uint256(uint160(voter))));
+            uint256 weight = BITTENSOR_VOTES.getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(voter))));
 
             if (tally.support[voter] == 2) forVotes += weight;
             else if (tally.support[voter] == 1) againstVotes += weight;
