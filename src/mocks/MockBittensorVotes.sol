@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "../interfaces/IBittensorVotes.sol";
+import { IBittensorVotes } from "../interfaces/IBittensorVotes.sol";
 
 contract MockBittensorVotes is IBittensorVotes {
     mapping(uint16 => mapping(bytes32 => uint256)) public votingPower;

@@ -106,8 +106,6 @@ contract TreasuryController is
         return forVotes > againstVotes;
     }
 
-    // --- POPRAWIONE FUNKCJE OVERRIDE (Rozbite na wiele linii) ---
-
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {
         return super.state(proposalId);
     }
