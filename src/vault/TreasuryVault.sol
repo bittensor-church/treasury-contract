@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { TimelockController } from "lib/openzeppelin-contracts/contracts/governance/TimelockController.sol";
+import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 /// @dev Adres prekompilatu Stakingu w sieci Bittensor.
 address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000805;

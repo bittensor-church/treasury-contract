@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Script } from "forge-std/Script.sol";
-import { console } from "forge-std/console.sol"; // <--- BRAKOWAŁO TEGO IMPORTU
+import { console } from "forge-std/console.sol";
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
 import { TreasuryController } from "../src/controller/TreasuryController.sol";
 import { MockBittensorVotes } from "../src/mocks/MockBittensorVotes.sol";
@@ -24,10 +24,10 @@ contract DeployGovernance is Script {
         // 2. Vault
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](1);
-        executors[0] = address(0); // Każdy może wykonać execute (jeśli czas minął)
+        executors[0] = address(0); // Any address can execute
 
         TreasuryVault vault = new TreasuryVault(
-            30, // --- ZMIANA: minDelay = 30 sekund ---
+            30, // minDelay
             proposers,
             executors,
             deployerAddress
