@@ -12,16 +12,14 @@ contract TreasuryController is
     GovernorSettings,
     GovernorTimelockControl
 {
-    // Zmiana na SCREAMING_SNAKE_CASE dla zmiennych immutable
     IBittensorVotes public immutable BITTENSOR_VOTES;
     uint16 public immutable TARGET_NETUID;
 
-    uint256 public constant TOTAL_SUPPLY_BITTENSOR = 100_000 * 1e9;
     uint256 public constant QUORUM_PERCENT = 4;
 
     struct ProposalTallies {
         address[] voters;
-        mapping(address => uint8) support; // 0: brak, 1: przeciw, 2: za
+        mapping(address => uint8) support;
         bool counted;
         uint256 forVotes;
         uint256 againstVotes;
@@ -42,20 +40,14 @@ contract TreasuryController is
         TARGET_NETUID = _netuid;
     }
 
-    // --- Zegar (IERC6372) ---
-
     function clock() public view virtual override returns (uint48) {
         return uint48(block.number);
     }
 
-    // solhint-disable-next-line func-name-mixedcase
     function CLOCK_MODE() public view virtual override returns (string memory) {
         return "mode=blocknumber&from=default";
     }
 
-    // --- Implementacja Governor ---
-
-    // solhint-disable-next-line func-name-mixedcase
     function COUNTING_MODE() public pure virtual override returns (string memory) {
         return "support=bravo&quorum=for,against";
     }
@@ -64,9 +56,6 @@ contract TreasuryController is
         return _proposalTallies[proposalId].support[account] != 0;
     }
 
-    /**
-     * @dev Pobiera siłę głosu (Alfy) z kontraktu BittensorVotes dla danego netuid.
-     */
     function _getVotes(
         address account,
         uint256 /*timepoint*/,
@@ -76,10 +65,8 @@ contract TreasuryController is
     }
 
     function quorum(uint256 /* timepoint */) public view virtual override returns (uint256) {
-        return (TOTAL_SUPPLY_BITTENSOR * QUORUM_PERCENT) / 100;
+        return (BITTENSOR_VOTES.getTotalVotingPower(TARGET_NETUID) * QUORUM_PERCENT) / 100;
     }
-
-    // --- Logika zapisu głosów ---
 
     function _countVote(
         uint256 proposalId,
@@ -96,8 +83,6 @@ contract TreasuryController is
         }
         tally.support[account] = support + 1;
     }
-
-    // --- Przeliczanie wyników (Iteracja) ---
 
     function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes, uint256 againstVotes) {
         ProposalTallies storage tally = _proposalTallies[proposalId];
@@ -120,8 +105,6 @@ contract TreasuryController is
         (uint256 forVotes, uint256 againstVotes) = _getTallyResult(proposalId);
         return forVotes > againstVotes;
     }
-
-    // --- Boilerplate Overrides ---
 
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) { return super.state(proposalId); }
     function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) { return super.votingDelay(); }
