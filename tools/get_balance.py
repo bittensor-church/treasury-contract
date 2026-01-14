@@ -1,52 +1,67 @@
 #!/usr/bin/env python3
 """
-CLI to check native balance (TAO) of any address.
+CLI to fetch REAL stake breakdown directly from the Subtensor chain (bypassing EVM/Mock).
 """
 
 import argparse
 import sys
-from pathlib import Path
-
-current_dir = Path(__file__).resolve().parent
-if str(current_dir) not in sys.path:
-    sys.path.append(str(current_dir))
-
-from utils.contract_loader import get_web3_provider
+import bittensor as bt
 
 def main():
-    parser = argparse.ArgumentParser(description="Get Account Balance")
-    parser.add_argument("address", help="Address to check (Wallet or Contract)")
-    parser.add_argument("--rpc-url", required=True)
+    parser = argparse.ArgumentParser(description="Get Real Stake Breakdown from Subtensor")
+
+    # Tutaj podajemy adres SS58 (np. 5Hg...), bo to na nim żyje Stake w Bittensorze
+    parser.add_argument("ss58_address", help="Coldkey SS58 Address (e.g. 5HTBix...)")
+
+    # Wybór sieci (test/finney/local)
+    parser.add_argument("--network", default="test", help="Network: test, finney, or local")
+
     args = parser.parse_args()
 
-    # 1. Connect
+    print(f"Connecting to Bittensor network: {args.network}...")
+
     try:
-        w3 = get_web3_provider(args.rpc_url)
+        # 1. Połączenie z Subtensor
+        sub = bt.subtensor(network=args.network)
     except Exception as e:
-        sys.exit(f"RPC Connection Error: {e}")
+        print(f"Error connecting to Subtensor: {e}")
+        sys.exit(1)
 
-    # 2. Resolve Address
-    if not w3.is_address(args.address):
-        sys.exit("Invalid address format")
+    print(f"Fetching stake info for: {args.ss58_address}")
+    print("-" * 60)
 
-    target_address = w3.to_checksum_address(args.address)
-
-    # 3. Get Balance
     try:
-        # Returns balance in Wei (10^18)
-        balance_wei = w3.eth.get_balance(target_address)
-        balance_tao = w3.from_wei(balance_wei, 'ether')
-    except Exception as e:
-        sys.exit(f"Error fetching balance: {e}")
+        # 2. Pobranie pełnej listy delegacji dla tego Coldkeya
+        # Zwraca listę obiektów StakeInfo
+        stakes = sub.get_stake_info_for_coldkey(args.ss58_address)
 
-    print("-" * 40)
-    print(f"BALANCE CHECK")
-    print("-" * 40)
-    print(f"Target:  {target_address}")
-    print("-" * 40)
-    print(f"TAO:     {balance_tao}")
-    print(f"Wei/Rao: {balance_wei}")
-    print("-" * 40)
+        if not stakes:
+            print("No stake found for this address.")
+            return
+
+        total_stake = 0.0
+
+        # Nagłówki tabeli
+        print(f"{'VALIDATOR HOTKEY (Delegated To)':<50} | {'STAKE (TAO)':>15}")
+        print("-" * 60)
+
+        # 3. Iteracja po walidatorach
+        for stake_info in stakes:
+            hotkey = stake_info.hotkey_ss58
+            amount = float(stake_info.stake)
+
+            # Pomiń zerowe wpisy
+            if amount > 0:
+                print(f"{hotkey:<50} | {amount:>15.9f}")
+                total_stake += amount
+
+        print("-" * 60)
+        print(f"{'TOTAL ALPHA / STAKE':<50} | {total_stake:>15.9f} TAO")
+        print("-" * 60)
+
+    except Exception as e:
+        print(f"Error fetching stake data: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
