@@ -33,7 +33,7 @@ contract TreasuryController is
         uint16 _netuid
     )
     Governor("BittensorDAO")
-    GovernorSettings(0, 10, 100e9)
+    GovernorSettings(0, 10, 0)
     GovernorTimelockControl(_timelock)
     {
         BITTENSOR_VOTES = IBittensorVotes(_bittensorVotes);
