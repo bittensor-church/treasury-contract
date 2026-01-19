@@ -11,9 +11,9 @@ current_dir = Path(__file__).resolve().parent
 if str(current_dir) not in sys.path:
     sys.path.append(str(current_dir))
 
-from utils.contract_loader import get_web3_provider, load_contract
+from utils.contract_loader import load_contract
+from utils.common import setup_web3_connection, add_web3_arguments
 
-# OpenZeppelin ProposalState Enum
 STATES = [
     "Pending",   # 0
     "Active",    # 1
@@ -29,16 +29,15 @@ def main():
     parser = argparse.ArgumentParser(description="Get Proposal State")
     parser.add_argument("contract", help="Governor contract address")
     parser.add_argument("--proposal-id", required=True, type=int)
-    parser.add_argument("--rpc-url", required=True)
+
+    add_web3_arguments(parser, requires_private_key=False)
     args = parser.parse_args()
 
-    # 1. Connect
     try:
-        w3 = get_web3_provider(args.rpc_url)
+        w3 = setup_web3_connection(args.rpc_url)
     except Exception as e:
         sys.exit(f"RPC Connection Error: {e}")
 
-    # 2. Load Contract
     try:
         artifact_path = current_dir.parent / "out" / "TreasuryController.sol" / "TreasuryController.json"
         contract = load_contract(w3, args.contract, artifact_path)
@@ -49,7 +48,6 @@ def main():
     print(f"QUERY PROPOSAL: {args.proposal_id}")
     print("-" * 40)
 
-    # 3. Get State
     try:
         state_enum = contract.functions.state(args.proposal_id).call()
         state_str = STATES[state_enum] if 0 <= state_enum < len(STATES) else "Unknown"
@@ -57,7 +55,6 @@ def main():
     except Exception as e:
         print(f"State:      Error ({e})")
 
-    # 4. Get Deadlines (Snapshot & Deadline)
     try:
         snapshot = contract.functions.proposalSnapshot(args.proposal_id).call()
         deadline = contract.functions.proposalDeadline(args.proposal_id).call()
@@ -75,20 +72,13 @@ def main():
     except Exception as e:
         print(f"Details:    Error fetching details ({e})")
 
-    # 5. Get Votes (For/Against/Abstain)
     try:
-        # proposalVotes(uint256) returns (against, for, abstain)
         votes = contract.functions.proposalVotes(args.proposal_id).call()
-
-        # Helper to format wei to human readable
-        # Assuming token is 9 decimals (Mock) or 18. Just showing raw for safety.
         print("-" * 40)
         print(f"Against:    {votes[0]}")
         print(f"For:        {votes[1]}")
         print(f"Abstain:    {votes[2]}")
     except Exception:
-        # Not all governors implement proposalVotes directly depending on extensions,
-        # but ours (GovernorCountingSimple) does.
         pass
 
     print("-" * 40)

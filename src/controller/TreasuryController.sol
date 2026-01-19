@@ -15,7 +15,7 @@ contract TreasuryController is
     IBittensorVotes public immutable BITTENSOR_VOTES;
     uint16 public immutable TARGET_NETUID;
 
-    uint256 public constant QUORUM_PERCENT = 4;
+    uint256 public immutable QUORUM_NUMERATOR;
 
     struct ProposalTallies {
         address[] voters;
@@ -30,14 +30,20 @@ contract TreasuryController is
     constructor(
         TimelockController _timelock,
         address _bittensorVotes,
-        uint16 _netuid
+        uint16 _netuid,
+        string memory _name,
+        uint48 _initialVotingDelay,
+        uint32 _initialVotingPeriod,
+        uint256 _initialProposalThreshold,
+        uint256 _quorumNumerator
     )
-    Governor("BittensorDAO")
-    GovernorSettings(0, 10, 0)
+    Governor(_name)
+    GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
     GovernorTimelockControl(_timelock)
     {
         BITTENSOR_VOTES = IBittensorVotes(_bittensorVotes);
         TARGET_NETUID = _netuid;
+        QUORUM_NUMERATOR = _quorumNumerator;
     }
 
     function clock() public view virtual override returns (uint48) {
@@ -65,7 +71,7 @@ contract TreasuryController is
     }
 
     function quorum(uint256 /* timepoint */) public view virtual override returns (uint256) {
-        return (BITTENSOR_VOTES.getTotalVotingPower(TARGET_NETUID) * QUORUM_PERCENT) / 100;
+        return (BITTENSOR_VOTES.getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
     }
 
     function _countVote(
