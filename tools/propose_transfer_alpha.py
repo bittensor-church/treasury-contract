@@ -62,7 +62,8 @@ def main():
     account = w3.eth.account.from_key(private_key)
 
     # --- PRZYGOTOWANIE DANYCH ---
-    amount_rao = int(args.amount * 1_000_000_000)
+    # IMPORTANT: Staking precompile uses 18 decimals (Wei-style), not 9!
+    amount_wei = int(args.amount * 1_000_000_000_000_000_000)
 
     # Hotkeys to bytes32
     from_hotkey = bytes.fromhex(clean_hex(args.from_hotkey).zfill(64))
@@ -85,7 +86,7 @@ def main():
 
         sig = "moveStake(bytes32,bytes32,uint256,uint256,uint256)"
         types = ['bytes32', 'bytes32', 'uint256', 'uint256', 'uint256']
-        args_move = [from_hotkey, to_hotkey, args.netuid, args.netuid, amount_rao]
+        args_move = [from_hotkey, to_hotkey, args.netuid, args.netuid, amount_wei]
 
         calldata_hex = encode_manual_calldata(w3, sig, types, args_move)
 
@@ -101,7 +102,7 @@ def main():
     # Sygnatura: transferStake(destination_coldkey, hotkey, origin_net, dest_net, amount)
     sig_transfer = "transferStake(bytes32,bytes32,uint256,uint256,uint256)"
     types_transfer = ['bytes32', 'bytes32', 'uint256', 'uint256', 'uint256']
-    args_transfer = [recipient_coldkey, to_hotkey, args.netuid, args.netuid, amount_rao]
+    args_transfer = [recipient_coldkey, to_hotkey, args.netuid, args.netuid, amount_wei]
 
     calldata_transfer_hex = encode_manual_calldata(w3, sig_transfer, types_transfer, args_transfer)
 

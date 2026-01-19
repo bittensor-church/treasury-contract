@@ -63,7 +63,8 @@ def main():
         sys.exit(f"Web3 Error: {e}")
 
     # --- RECONSTRUCT DATA (EXACTLY AS IN PROPOSE SCRIPT) ---
-    amount_rao = int(args.amount * 1_000_000_000)
+    # IMPORTANT: Staking precompile uses 18 decimals (Wei-style), not 9!
+    amount_wei = int(args.amount * 1_000_000_000_000_000_000)
 
     from_hotkey = bytes.fromhex(clean_hex(args.from_hotkey).zfill(64))
     to_hotkey = bytes.fromhex(clean_hex(args.to_hotkey).zfill(64))
@@ -82,7 +83,7 @@ def main():
         print(f"[Step 1] Adding moveStake...")
         sig = "moveStake(bytes32,bytes32,uint256,uint256,uint256)"
         types = ['bytes32', 'bytes32', 'uint256', 'uint256', 'uint256']
-        args_move = [from_hotkey, to_hotkey, args.netuid, args.netuid, amount_rao]
+        args_move = [from_hotkey, to_hotkey, args.netuid, args.netuid, amount_wei]
 
         calldata_hex = encode_manual_calldata(w3, sig, types, args_move)
 
@@ -96,7 +97,7 @@ def main():
     print(f"[Step 2] Adding transferStake...")
     sig_transfer = "transferStake(bytes32,bytes32,uint256,uint256,uint256)"
     types_transfer = ['bytes32', 'bytes32', 'uint256', 'uint256', 'uint256']
-    args_transfer = [recipient_coldkey, to_hotkey, args.netuid, args.netuid, amount_rao]
+    args_transfer = [recipient_coldkey, to_hotkey, args.netuid, args.netuid, amount_wei]
 
     calldata_transfer_hex = encode_manual_calldata(w3, sig_transfer, types_transfer, args_transfer)
 
