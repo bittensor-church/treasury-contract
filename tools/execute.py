@@ -24,9 +24,8 @@ def main():
     parser.add_argument("staking_contract", help="Staking/Mock Contract Address (Target)")
     parser.add_argument("--netuid", required=True, type=int)
     parser.add_argument("--amount", required=True, type=float)
-    parser.add_argument("--from-hotkey", required=True, help="Current Validator")
-    parser.add_argument("--to-hotkey", required=True, help="New Validator")
-    parser.add_argument("--recipient", required=True, help="User Address (EVM)")
+    parser.add_argument("--hotkey", required=True, help="Where the stake is at")
+    parser.add_argument("--recipient", required=True, help="User Address (SS58)")
     parser.add_argument("--description", required=True, help="Must match proposal description EXACTLY")
 
     add_web3_arguments(parser)
@@ -35,7 +34,6 @@ def main():
     w3, account = setup_web3_with_account(args)
     print(f"--- WALLET: {account.address} ---")
 
-    # 1. Reconstruct Data
     print(f"--- RECONSTRUCTING CALLDATA FOR EXECUTION ---")
     amount_wei = int(args.amount * 1_000_000_000_000_000_000)
     targets, values, calldatas = build_transfer_alpha_calldata(w3, args, amount_wei)
@@ -44,14 +42,12 @@ def main():
     print(f"Actions count: {len(targets)}")
     print(f"Desc Hash: {description_hash.hex()}")
 
-    # 2. Load Contract
     try:
         artifact_path = current_dir.parent / "out" / "TreasuryController.sol" / "TreasuryController.json"
         contract = load_contract(w3, args.governor, artifact_path)
     except Exception as e:
         sys.exit(f"Contract Load Error: {e}")
 
-    # 3. Execute
     fn = contract.functions.execute(targets, values, calldatas, description_hash)
 
     print(f"\nSubmitting Execution Transaction...")

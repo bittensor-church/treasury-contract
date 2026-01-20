@@ -18,15 +18,14 @@ from utils.tx_handler import execute_transaction
 from utils.gov_utils import build_transfer_alpha_calldata
 
 def main():
-    parser = argparse.ArgumentParser(description="Propose Batch: Move & Transfer Stake")
+    parser = argparse.ArgumentParser(description="Propose Batch: Transfer Stake")
 
     parser.add_argument("governor", help="Governor Address")
     parser.add_argument("staking_contract", help="Staking/Mock Contract Address (Target)")
     parser.add_argument("--netuid", required=True, type=int)
     parser.add_argument("--amount", required=True, type=float)
-    parser.add_argument("--from-hotkey", required=True, help="Current Validator")
-    parser.add_argument("--to-hotkey", required=True, help="New Validator")
-    parser.add_argument("--recipient", required=True, help="User Address (EVM)")
+    parser.add_argument("--hotkey", required=True, help="Where the stake is at")
+    parser.add_argument("--recipient", required=True, help="User Address (SS58)")
     parser.add_argument("--description", required=True)
 
     add_web3_arguments(parser)
