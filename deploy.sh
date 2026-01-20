@@ -31,7 +31,7 @@ echo "NetUID:                  $NETUID"
 echo "Quorum (BPS):            $QUORUM_BPS"
 echo "--------------------------------------------------"
 
-forge script script/DeployGovernance.s.sol:DeployGovernance \
+forge script script/Deploy.s.sol:DeployGovernance \
     --rpc-url "$RPC_URL" \
     --broadcast \
     --legacy \
