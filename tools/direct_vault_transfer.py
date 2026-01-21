@@ -95,7 +95,7 @@ def main():
         sys.exit(f"Error loading Contract ABI: {e}")
 
     # 2. HARDCODED MIN DELAY (Zgodnie z prośbą)
-    min_delay = 5
+    min_delay = 15
     print(f"Vault Min Delay (Hardcoded): {min_delay} seconds")
 
     # 3. PREPARE DATA
