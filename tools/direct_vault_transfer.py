@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct Execution on TreasuryVault (Timelock) bypassing Governor.
-Steps: Schedule -> Wait (minDelay) -> Execute.
+Steps: Schedule -> Wait (Hardcoded 5s) -> Execute.
 """
 
 import argparse
@@ -18,16 +18,14 @@ current_dir = Path(__file__).resolve().parent
 if str(current_dir) not in sys.path:
     sys.path.append(str(current_dir))
 
-# Zakładam, że te pliki masz w utils/ tak jak w poprzednim skrypcie
 try:
     from utils.contract_loader import load_contract
     from utils.common import setup_web3_with_account, add_web3_arguments
     from utils.tx_handler import execute_transaction
 except ImportError:
-    print("Błąd importów. Upewnij się, że jesteś w katalogu root projektu i masz folder utils.")
-    sys.exit(1)
+    sys.exit("Error: Could not import utils. Make sure you are in the project root.")
 
-# --- HELPER FUNCTIONS (Z Twojego kodu) ---
+# --- HELPER FUNCTIONS ---
 
 def clean_hex(hex_str):
     if hex_str.startswith("0x"):
@@ -40,25 +38,16 @@ def encode_manual_calldata(w3, func_signature, types, args):
     return (selector + encoded_args).hex()
 
 def build_transfer_payload(w3, args, amount_wei):
-    """
-    Buduje payload dla transferStake.
-    Zwraca targets, values, calldatas (listy).
-    """
-    # Dekodowanie adresów
     hotkey = bytes.fromhex(clean_hex(args.hotkey).zfill(64))
     recipient_decoded_hex = ss58_decode(args.recipient)
     recipient_coldkey = bytes.fromhex(clean_hex(recipient_decoded_hex))
 
-    # Sygnatura i typy (z Twojego snippetu)
     sig_transfer = "transferStake(bytes32,bytes32,uint256,uint256,uint256)"
     types_transfer = ['bytes32', 'bytes32', 'uint256', 'uint256', 'uint256']
-
-    # Argumenty dla prekompilacji
     args_transfer = [recipient_coldkey, hotkey, args.netuid, args.netuid, amount_wei]
 
     calldata_transfer_hex = encode_manual_calldata(w3, sig_transfer, types_transfer, args_transfer)
 
-    # Formatowanie pod Batch
     targets = [args.staking_contract]
     values = [0]
     calldatas = [bytes.fromhex(calldata_transfer_hex)]
@@ -85,118 +74,97 @@ def main():
 
     print(f"--- PREPARING DIRECT VAULT EXECUTION ---")
 
-    # 1. Załaduj kontrakt Vaulta
-    # Używamy prostego ABI Timelocka, bo TreasuryVault dziedziczy z TimelockController
-    # Możesz tu podać ścieżkę do TreasuryVault.json jeśli wolisz
-    timelock_abi = [
-        {
-            "inputs": [],
-            "name": "getMinDelay",
-            "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [
-                {"internalType": "address[]","name": "targets","type": "address[]"},
-                {"internalType": "uint256[]","name": "values","type": "uint256[]"},
-                {"internalType": "bytes[]","name": "payloads","type": "bytes[]"},
-                {"internalType": "bytes32","name": "predecessor","type": "bytes32"},
-                {"internalType": "bytes32","name": "salt","type": "bytes32"},
-                {"internalType": "uint256","name": "delay","type": "uint256"}
-            ],
-            "name": "scheduleBatch",
-            "outputs": [],
-            "stateMutability": "nonpayable",
-            "type": "function"
-        },
-        {
-            "inputs": [
-                {"internalType": "address[]","name": "targets","type": "address[]"},
-                {"internalType": "uint256[]","name": "values","type": "uint256[]"},
-                {"internalType": "bytes[]","name": "payloads","type": "bytes[]"},
-                {"internalType": "bytes32","name": "predecessor","type": "bytes32"},
-                {"internalType": "bytes32","name": "salt","type": "bytes32"}
-            ],
-            "name": "executeBatch",
-            "outputs": [],
-            "stateMutability": "payable",
-            "type": "function"
-        }
-    ]
+    # 1. LOAD CONTRACT
+    try:
+        vault_artifact = current_dir.parent / "out" / "TreasuryVault.sol" / "TreasuryVault.json"
 
-    vault = w3.eth.contract(address=args.vault, abi=timelock_abi)
+        # Fallback do prostego ABI Timelocka, jeśli plik JSON nie istnieje (dla bezpieczeństwa)
+        if not vault_artifact.exists():
+            print("Warning: Artifact not found. Using generic Timelock ABI.")
+            timelock_abi = [
+                {"inputs":[{"internalType":"address[]","name":"targets","type":"address[]"},{"internalType":"uint256[]","name":"values","type":"uint256[]"},{"internalType":"bytes[]","name":"payloads","type":"bytes[]"},{"internalType":"bytes32","name":"predecessor","type":"bytes32"},{"internalType":"bytes32","name":"salt","type":"bytes32"},{"internalType":"uint256","name":"delay","type":"uint256"}],"name":"scheduleBatch","outputs":[],"stateMutability":"nonpayable","type":"function"},
+                {"inputs":[{"internalType":"address[]","name":"targets","type":"address[]"},{"internalType":"uint256[]","name":"values","type":"uint256[]"},{"internalType":"bytes[]","name":"payloads","type":"bytes[]"},{"internalType":"bytes32","name":"predecessor","type":"bytes32"},{"internalType":"bytes32","name":"salt","type":"bytes32"}],"name":"executeBatch","outputs":[],"stateMutability":"payable","type":"function"}
+            ]
+            vault = w3.eth.contract(address=args.vault, abi=timelock_abi)
+        else:
+            vault = load_contract(w3, args.vault, vault_artifact)
 
-    # 2. Przygotuj dane (Calldata)
+        print(f"Loaded TreasuryVault at: {args.vault}")
+
+    except Exception as e:
+        sys.exit(f"Error loading Contract ABI: {e}")
+
+    # 2. HARDCODED MIN DELAY (Zgodnie z prośbą)
+    min_delay = 5
+    print(f"Vault Min Delay (Hardcoded): {min_delay} seconds")
+
+    # 3. PREPARE DATA
     targets, values, calldatas = build_transfer_payload(w3, args, amount_wei)
 
-    # Generuj losowy SALT (wymagany, aby operacja była unikalna)
     salt = "0x" + secrets.token_hex(32)
-    predecessor = "0x" + "00"*32 # Puste (brak zależności od innej transakcji)
+    predecessor = "0x" + "00"*32
 
-    # Pobierz aktualny MinDelay z kontraktu
-    min_delay = vault.functions.getMinDelay().call()
-    print(f"Vault Min Delay: {min_delay} seconds")
     print(f"Generated Salt: {salt}")
 
-    # 3. KROK 1: SCHEDULE (Zaplanuj)
+    # 4. SCHEDULE
     print("\n[1/3] Scheduling Batch Operation...")
 
-    schedule_fn = vault.functions.scheduleBatch(
-        targets,
-        values,
-        calldatas,
-        predecessor,
-        salt,
-        min_delay
-    )
+    try:
+        schedule_fn = vault.functions.scheduleBatch(
+            targets,
+            values,
+            calldatas,
+            predecessor,
+            salt,
+            min_delay
+        )
 
-    receipt = execute_transaction(
-        w3=w3,
-        account=account,
-        function_call=schedule_fn,
-        force_gas_price_gwei=args.force_gas_price_gwei
-    )
-    print(f"Schedule TX Hash: {receipt.transactionHash.hex()}")
+        receipt = execute_transaction(
+            w3=w3,
+            account=account,
+            function_call=schedule_fn,
+            force_gas_price_gwei=args.force_gas_price_gwei
+        )
+        print(f"Schedule TX Hash: {receipt.transactionHash.hex()}")
+    except Exception as e:
+        print("\n!!! ERROR DURING SCHEDULE !!!")
+        print(f"Error: {e}")
+        print("NOTE: If you get 'Unknown selector' here, your $VAULT address is definitely WRONG.")
+        sys.exit(1)
 
-    # 4. KROK 2: WAIT (Czekaj)
-    if min_delay > 0:
-        print(f"\n[2/3] Waiting {min_delay} seconds for Timelock...")
-        # Dodajemy mały bufor (+2 sekundy), aby upewnić się, że blok został wykopany
-        for i in range(min_delay + 2, 0, -1):
-            sys.stdout.write(f"\rTime remaining: {i}s ")
-            sys.stdout.flush()
-            time.sleep(1)
-        print("\nReady to execute!")
-    else:
-        print("\n[2/3] No delay required.")
+    # 5. WAIT
+    print(f"\n[2/3] Waiting {min_delay} seconds for Timelock...")
+    for i in range(min_delay + 2, 0, -1):
+        sys.stdout.write(f"\rTime remaining: {i}s ")
+        sys.stdout.flush()
+        time.sleep(1)
+    print("\nReady to execute!")
 
-    # 5. KROK 3: EXECUTE (Wykonaj)
+    # 6. EXECUTE
     print("\n[3/3] Executing Batch Operation...")
 
-    execute_fn = vault.functions.executeBatch(
-        targets,
-        values,
-        calldatas,
-        predecessor,
-        salt
-    )
-
-    # Tutaj może być potrzebny wyższy Gas Limit dla prekompilacji
     try:
+        execute_fn = vault.functions.executeBatch(
+            targets,
+            values,
+            calldatas,
+            predecessor,
+            salt
+        )
+
         receipt_exec = execute_transaction(
             w3=w3,
             account=account,
             function_call=execute_fn,
             force_gas_price_gwei=args.force_gas_price_gwei,
-            gas_limit_fallback=5_000_000 # Fallback na wypadek problemów z estymacją prekompilacji
+            gas_limit_fallback=5_000_000
         )
         print(f"Execute TX Hash: {receipt_exec.transactionHash.hex()}")
         print("SUCCESS: Operation executed directly on Vault.")
+
     except Exception as e:
         print(f"EXECUTION FAILED: {e}")
-        # Jeśli się nie uda, salt i dane są już 'zaplanowane', można spróbować 'execute' ręcznie ponownie
-        print(f"You can retry execution manually using salt: {salt}")
+        print(f"To retry manually, save this salt: {salt}")
 
 if __name__ == "__main__":
     main()
