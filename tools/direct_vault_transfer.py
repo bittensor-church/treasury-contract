@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct Execution on TreasuryVault (Timelock) bypassing Governor.
-Steps: Schedule -> Wait (Hardcoded 5s) -> Execute.
+Steps: Schedule -> Wait (Block Time Buffer) -> Execute.
 """
 
 import argparse
@@ -78,7 +78,7 @@ def main():
     try:
         vault_artifact = current_dir.parent / "out" / "TreasuryVault.sol" / "TreasuryVault.json"
 
-        # Fallback do prostego ABI Timelocka, jeśli plik JSON nie istnieje (dla bezpieczeństwa)
+        # Fallback to generic Timelock ABI if artifact missing
         if not vault_artifact.exists():
             print("Warning: Artifact not found. Using generic Timelock ABI.")
             timelock_abi = [
@@ -94,9 +94,11 @@ def main():
     except Exception as e:
         sys.exit(f"Error loading Contract ABI: {e}")
 
-    # 2. HARDCODED MIN DELAY (Zgodnie z prośbą)
-    min_delay = 15
-    print(f"Vault Min Delay (Hardcoded): {min_delay} seconds")
+    # 2. CONFIG DELAY
+    # Contract is deployed with minDelay = 1 second.
+    # We must use exactly this value (or higher) in scheduleBatch.
+    contract_min_delay = 1
+    print(f"Contract Min Delay: {contract_min_delay} second(s)")
 
     # 3. PREPARE DATA
     targets, values, calldatas = build_transfer_payload(w3, args, amount_wei)
@@ -116,7 +118,7 @@ def main():
             calldatas,
             predecessor,
             salt,
-            min_delay
+            contract_min_delay # Must be >= contract's minDelay
         )
 
         receipt = execute_transaction(
@@ -129,12 +131,20 @@ def main():
     except Exception as e:
         print("\n!!! ERROR DURING SCHEDULE !!!")
         print(f"Error: {e}")
-        print("NOTE: If you get 'Unknown selector' here, your $VAULT address is definitely WRONG.")
+        print("NOTE: If you get 'Unknown selector', check your $VAULT address.")
         sys.exit(1)
 
     # 5. WAIT
-    print(f"\n[2/3] Waiting {min_delay} seconds for Timelock...")
-    for i in range(min_delay + 2, 0, -1):
+    # CRITICAL FIX: Bittensor block time is ~12 seconds.
+    # Even if min_delay is 1s, we MUST wait for the next block to be mined.
+    # Safe buffer = 2 blocks = ~24-25 seconds.
+
+    wait_buffer_seconds = 25
+    total_wait_time = contract_min_delay + wait_buffer_seconds
+
+    print(f"\n[2/3] Waiting {total_wait_time} seconds (Contract Delay + Block Production Buffer)...")
+
+    for i in range(total_wait_time, 0, -1):
         sys.stdout.write(f"\rTime remaining: {i}s ")
         sys.stdout.flush()
         time.sleep(1)
