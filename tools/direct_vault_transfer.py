@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct Execution on TreasuryVault (Timelock) bypassing Governor.
-Steps: Schedule -> Wait (Block Time Buffer) -> Execute.
+Steps: Schedule -> Wait (Block Time Buffer) -> DEBUG SIMULATION -> Execute.
 """
 
 import argparse
@@ -10,6 +10,7 @@ import time
 import secrets
 from pathlib import Path
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 from eth_abi import encode
 from substrateinterface.utils.ss58 import ss58_decode
 
@@ -54,6 +55,33 @@ def build_transfer_payload(w3, args, amount_wei):
 
     return targets, values, calldatas
 
+# --- DEBUGGING FUNCTION ---
+def simulate_inner_call(w3, vault_address, target, calldata):
+    """
+    Symuluje wewnętrzne wywołanie z Vaulta do Prekompilacji.
+    Pozwala zobaczyć prawdziwy błąd (np. Rate Limit) zamiast 'FailedInnerCall'.
+    """
+    print(f"\n[DEBUG] Simulating inner call (Vault -> Staking Precompile)...")
+    try:
+        # Symulacja: 'from' ustawione na adres Vaulta
+        w3.eth.call({
+            'from': vault_address,
+            'to': target,
+            'data': calldata,
+            'value': 0
+        })
+        print("[DEBUG] Simulation SUCCESS! The inner call seems valid.")
+        return True
+    except ContractLogicError as e:
+        print("\n" + "!"*60)
+        print("🚨 INNER CALL SIMULATION FAILED (REAL REASON FOUND) 🚨")
+        print(f"Revert Reason: {e}")
+        print("!"*60 + "\n")
+        return False
+    except Exception as e:
+        print(f"[DEBUG] Simulation failed with unknown error: {e}")
+        return False
+
 # --- MAIN SCRIPT ---
 
 def main():
@@ -70,7 +98,7 @@ def main():
     args = parser.parse_args()
 
     w3, account = setup_web3_with_account(args)
-    amount_wei = int(args.amount * 1_000_000_000_000_000_000)
+    amount_wei = int(args.amount * 1_000_000_000)
 
     print(f"--- PREPARING DIRECT VAULT EXECUTION ---")
 
@@ -95,8 +123,6 @@ def main():
         sys.exit(f"Error loading Contract ABI: {e}")
 
     # 2. CONFIG DELAY
-    # Contract is deployed with minDelay = 1 second.
-    # We must use exactly this value (or higher) in scheduleBatch.
     contract_min_delay = 1
     print(f"Contract Min Delay: {contract_min_delay} second(s)")
 
@@ -118,7 +144,7 @@ def main():
             calldatas,
             predecessor,
             salt,
-            contract_min_delay # Must be >= contract's minDelay
+            contract_min_delay
         )
 
         receipt = execute_transaction(
@@ -131,14 +157,9 @@ def main():
     except Exception as e:
         print("\n!!! ERROR DURING SCHEDULE !!!")
         print(f"Error: {e}")
-        print("NOTE: If you get 'Unknown selector', check your $VAULT address.")
         sys.exit(1)
 
     # 5. WAIT
-    # CRITICAL FIX: Bittensor block time is ~12 seconds.
-    # Even if min_delay is 1s, we MUST wait for the next block to be mined.
-    # Safe buffer = 2 blocks = ~24-25 seconds.
-
     wait_buffer_seconds = 25
     total_wait_time = contract_min_delay + wait_buffer_seconds
 
@@ -149,6 +170,11 @@ def main():
         sys.stdout.flush()
         time.sleep(1)
     print("\nReady to execute!")
+
+    # --- DEBUG STEP ---
+    # Symulujemy wywołanie przed właściwą egzekucją
+    # simulate_inner_call(w3, args.vault, targets[0], calldatas[0])
+    # ------------------
 
     # 6. EXECUTE
     print("\n[3/3] Executing Batch Operation...")
