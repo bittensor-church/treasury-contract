@@ -35,7 +35,7 @@ def main():
     print(f"--- WALLET: {account.address} ---")
 
     print(f"--- RECONSTRUCTING CALLDATA ---")
-    amount_wei = int(args.amount * 1_000_000_000_000_000_000)
+    amount_wei = int(args.amount * 1_000_000_000)
     targets, values, calldatas = build_transfer_alpha_calldata(w3, args, amount_wei)
 
     description_hash = Web3.keccak(text=args.description)
