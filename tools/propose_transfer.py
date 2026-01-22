@@ -33,7 +33,7 @@ def main():
 
     w3, account = setup_web3_with_account(args)
 
-    amount_wei = int(args.amount * 1_000_000_000_000_000_000)
+    amount_wei = int(args.amount * 1_000_000_000)
 
     print(f"--- BUILDING PROPOSAL BATCH (LOW LEVEL) ---")
     targets, values, calldatas = build_transfer_alpha_calldata(w3, args, amount_wei)

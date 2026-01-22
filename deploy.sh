@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export RPC_URL="https://test.chain.opentensor.ai"
+export RPC_URL="https://bittensor-testnet-lite-public.nodies.app"
 
 export NETUID=1
 export GOV_NAME="BittensorDAO"
