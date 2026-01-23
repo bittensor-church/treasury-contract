@@ -8,14 +8,14 @@ import argparse
 import sys
 from pathlib import Path
 
-current_dir = Path(__file__).resolve().parent
-if str(current_dir) not in sys.path:
-    sys.path.append(str(current_dir))
-
 from utils.contract_loader import load_contract
 from utils.common import setup_web3_with_account, add_web3_arguments
 from utils.tx_handler import execute_transaction
 from utils.gov_utils import build_transfer_alpha_calldata
+
+current_dir = Path(__file__).resolve().parent
+if str(current_dir) not in sys.path:
+    sys.path.append(str(current_dir))
 
 def main():
     parser = argparse.ArgumentParser(description="Propose Batch: Transfer Stake")
