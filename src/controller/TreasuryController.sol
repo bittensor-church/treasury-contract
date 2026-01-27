@@ -58,6 +58,32 @@ contract TreasuryController is
         return "support=bravo&quorum=for,against";
     }
 
+    function proposeAndVote(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description
+    ) external returns (uint256) {
+        uint256 proposalId = hashProposal(targets, values, calldatas, keccak256(bytes(description)));
+
+        if (proposalSnapshot(proposalId) == 0) {
+            super.propose(targets, values, calldatas, description);
+        }
+        else {
+            ProposalState currentState = state(proposalId);
+
+            if (currentState == ProposalState.Active) {
+                _castVote(proposalId, msg.sender, 1, "");
+            } else if (currentState == ProposalState.Pending) {
+                revert("Proposal exists but is Pending (wait for voting delay)");
+            } else {
+                revert("Proposal exists but voting is closed");
+            }
+        }
+
+        return proposalId;
+    }
+
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
         return _proposalTallies[proposalId].support[account] != 0;
     }
