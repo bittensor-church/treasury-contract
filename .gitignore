@@ -10,9 +10,9 @@ out/
 # Docs
 docs/
 node_modules/
+
 # Dotenv file
 .env
-package-lock.json
 
 .idea
 broadcast/
