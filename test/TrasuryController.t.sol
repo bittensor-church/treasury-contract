@@ -28,22 +28,10 @@ contract TreasuryControllerTest is Test {
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
 
-        timelock = new TimelockController(
-            1 days,
-            proposers,
-            executors,
-            admin
-        );
+        timelock = new TimelockController(1 days, proposers, executors, admin);
 
         controller = new TreasuryController(
-            timelock,
-            address(mockVotes),
-            TARGET_NETUID,
-            "TreasuryDAO",
-            7200,
-            50400,
-            0,
-            QUORUM_NUMERATOR
+            timelock, address(mockVotes), TARGET_NETUID, "TreasuryDAO", 7200, 50400, 0, QUORUM_NUMERATOR
         );
 
         vm.startPrank(admin);
@@ -59,11 +47,11 @@ contract TreasuryControllerTest is Test {
         vm.roll(100);
     }
 
-    function _createProposalArgs(uint256 valueToSet) internal view returns (
-        address[] memory targets,
-        uint256[] memory values,
-        bytes[] memory calldatas
-    ) {
+    function _createProposalArgs(uint256 valueToSet)
+        internal
+        view
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
+    {
         targets = new address[](1);
         targets[0] = address(target);
         values = new uint256[](1);

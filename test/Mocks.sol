@@ -53,6 +53,6 @@ contract RevertingReceiver {
     }
 
     function callRegister(address _target, uint16 _netuid, bytes32 _hotkey) external payable {
-        TreasuryVault(payable(_target)).registerNeuron{value: msg.value}(_netuid, _hotkey);
+        TreasuryVault(payable(_target)).registerNeuron{ value: msg.value }(_netuid, _hotkey);
     }
 }

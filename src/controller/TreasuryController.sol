@@ -7,11 +7,7 @@ import { GovernorTimelockControl } from "@openzeppelin/contracts/governance/exte
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { IBittensorVotes } from "../interfaces/IBittensorVotes.sol";
 
-contract TreasuryController is
-    Governor,
-    GovernorSettings,
-    GovernorTimelockControl
-{
+contract TreasuryController is Governor, GovernorSettings, GovernorTimelockControl {
     IBittensorVotes public immutable BITTENSOR_VOTES;
     uint16 public immutable TARGET_NETUID;
 
@@ -37,9 +33,9 @@ contract TreasuryController is
         uint256 _initialProposalThreshold,
         uint256 _quorumNumerator
     )
-    Governor(_name)
-    GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
-    GovernorTimelockControl(_timelock)
+        Governor(_name)
+        GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
+        GovernorTimelockControl(_timelock)
     {
         BITTENSOR_VOTES = IBittensorVotes(_bittensorVotes);
         TARGET_NETUID = _netuid;
@@ -68,8 +64,7 @@ contract TreasuryController is
 
         if (proposalSnapshot(proposalId) == 0) {
             super.propose(targets, values, calldatas, description);
-        }
-        else {
+        } else {
             ProposalState currentState = state(proposalId);
 
             if (currentState == ProposalState.Active) {
@@ -90,13 +85,28 @@ contract TreasuryController is
 
     function _getVotes(
         address account,
-        uint256 /*timepoint*/,
+        uint256,
+        /*timepoint*/
         bytes memory /*params*/
-    ) internal view virtual override returns (uint256) {
+    )
+        internal
+        view
+        virtual
+        override
+        returns (uint256)
+    {
         return BITTENSOR_VOTES.getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(account))));
     }
 
-    function quorum(uint256 /* timepoint */) public view virtual override returns (uint256) {
+    function quorum(
+        uint256 /* timepoint */
+    )
+        public
+        view
+        virtual
+        override
+        returns (uint256)
+    {
         return (BITTENSOR_VOTES.getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
     }
 
@@ -104,9 +114,14 @@ contract TreasuryController is
         uint256 proposalId,
         address account,
         uint8 support,
-        uint256 /*weight*/,
+        uint256,
+        /*weight*/
         bytes memory /*params*/
-    ) internal virtual override {
+    )
+        internal
+        virtual
+        override
+    {
         ProposalTallies storage tally = _proposalTallies[proposalId];
         require(support <= 1, "Invalid vote type");
 
@@ -154,19 +169,41 @@ contract TreasuryController is
         return super.proposalThreshold();
     }
 
-    function proposalNeedsQueuing(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (bool) {
+    function proposalNeedsQueuing(uint256 proposalId)
+        public
+        view
+        override(Governor, GovernorTimelockControl)
+        returns (bool)
+    {
         return super.proposalNeedsQueuing(proposalId);
     }
 
-    function _queueOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint48) {
+    function _queueOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) returns (uint48) {
         return super._queueOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    function _executeOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) {
+    function _executeOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) {
         super._executeOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    function _cancel(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint256) {
+    function _cancel(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) returns (uint256) {
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 

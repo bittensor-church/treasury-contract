@@ -44,12 +44,7 @@ contract DeployGovernance is Script {
         address[] memory executors = new address[](1);
         executors[0] = address(0);
 
-        TreasuryVault vault = new TreasuryVault(
-            minDelay,
-            proposers,
-            executors,
-            deployerAddress
-        );
+        TreasuryVault vault = new TreasuryVault(minDelay, proposers, executors, deployerAddress);
 
         TreasuryController governor = new TreasuryController(
             vault,

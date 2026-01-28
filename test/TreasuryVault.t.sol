@@ -28,12 +28,7 @@ contract TreasuryVaultTest is Test {
         address[] memory executors = new address[](1);
         executors[0] = executor;
 
-        vault = new TreasuryVault(
-            1 days,
-            proposers,
-            executors,
-            admin
-        );
+        vault = new TreasuryVault(1 days, proposers, executors, admin);
     }
 
     function test_RegisterNeuron_Success_NoBurn() public {
@@ -46,7 +41,7 @@ contract TreasuryVaultTest is Test {
         vm.expectEmit(true, true, true, true);
         emit NeuronRegistration(1, bytes32("hotkey"), user);
 
-        bool success = vault.registerNeuron{value: sentAmount}(1, bytes32("hotkey"));
+        bool success = vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
 
         assertTrue(success);
         assertEq(user.balance, 10 ether);
@@ -61,7 +56,7 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, 10 ether);
         vm.prank(user);
 
-        vault.registerNeuron{value: sentAmount}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
 
         assertEq(user.balance, 10 ether - burnCost);
         assertEq(address(vault).balance, 0);
@@ -74,7 +69,7 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, 1 ether);
         vm.prank(user);
 
-        vault.registerNeuron{value: burnCost}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: burnCost }(1, bytes32("hotkey"));
 
         assertEq(user.balance, 0.5 ether);
         assertEq(address(vault).balance, 0);
@@ -87,7 +82,7 @@ contract TreasuryVaultTest is Test {
         vm.prank(user);
 
         vm.expectRevert(TreasuryVault.NeuronRegistrationFailed.selector);
-        vault.registerNeuron{value: 1 ether}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: 1 ether }(1, bytes32("hotkey"));
     }
 
     function test_RegisterNeuron_Revert_RefundFail() public {
@@ -99,19 +94,21 @@ contract TreasuryVaultTest is Test {
         vm.deal(address(revertingReceiver), 2 ether);
 
         vm.expectRevert(TreasuryVault.RefundError.selector);
-        revertingReceiver.callRegister{value: sentAmount}(address(vault), 1, bytes32("hotkey"));
+        revertingReceiver.callRegister{ value: sentAmount }(address(vault), 1, bytes32("hotkey"));
     }
 
     function test_RegisterNeuron_ZeroValue() public {
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(0);
 
         vm.prank(user);
-        vault.registerNeuron{value: 0}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: 0 }(1, bytes32("hotkey"));
 
         assertEq(address(vault).balance, 0);
     }
 
-    function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint96 burnAmount, uint16 netuid, bytes32 hotkey) public {
+    function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint96 burnAmount, uint16 netuid, bytes32 hotkey)
+        public
+    {
         vm.assume(burnAmount <= sentAmount);
 
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
@@ -120,7 +117,7 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, initialUserBalance);
 
         vm.prank(user);
-        vault.registerNeuron{value: sentAmount}(netuid, hotkey);
+        vault.registerNeuron{ value: sentAmount }(netuid, hotkey);
 
         assertEq(user.balance, initialUserBalance - burnAmount);
         assertEq(address(vault).balance, 0);
@@ -135,7 +132,7 @@ contract TreasuryVaultTest is Test {
 
         vm.deal(user, 5 ether);
         vm.prank(user);
-        vault.registerNeuron{value: sentAmount}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
 
         assertEq(user.balance, 5 ether - burnAmount);
         assertEq(address(vault).balance, 100 ether);
@@ -152,7 +149,7 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, 5 ether);
         vm.prank(user);
 
-        vault.registerNeuron{value: sentAmount}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
 
         assertEq(user.balance, 4 ether);
         assertEq(address(vault).balance, 10 ether + sentAmount - burnAmount);
@@ -167,7 +164,7 @@ contract TreasuryVaultTest is Test {
         vm.prank(user);
 
         vm.expectRevert(stdError.arithmeticError);
-        vault.registerNeuron{value: sentAmount}(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
     }
 
     function test_Timelock_AccessControl() public view {
@@ -185,7 +182,7 @@ contract TreasuryVaultTest is Test {
 
         vm.deal(user, sentAmount);
         vm.prank(user);
-        vault.registerNeuron{value: sentAmount}(netuid, hotkey);
+        vault.registerNeuron{ value: sentAmount }(netuid, hotkey);
 
         assertEq(user.balance, sentAmount - burnAmount);
     }
