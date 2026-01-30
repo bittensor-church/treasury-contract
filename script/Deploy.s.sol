@@ -5,7 +5,6 @@ import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
 import { TreasuryController } from "../src/controller/TreasuryController.sol";
-import { MockBittensorVotes } from "../src/mocks/MockBittensorVotes.sol";
 
 contract DeployGovernance is Script {
     function run() external {
@@ -37,9 +36,6 @@ contract DeployGovernance is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        MockBittensorVotes mock = new MockBittensorVotes();
-        address votesAddress = address(mock);
-
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](1);
         executors[0] = address(0);
@@ -48,7 +44,6 @@ contract DeployGovernance is Script {
 
         TreasuryController governor = new TreasuryController(
             vault,
-            votesAddress,
             uint16(netuid),
             govName,
             votingDelay,

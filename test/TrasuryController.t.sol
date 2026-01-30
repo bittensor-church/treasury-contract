@@ -24,17 +24,24 @@ contract TreasuryControllerTest is Test {
     uint256 constant QUORUM_NUMERATOR = 400;
     uint256 constant PROPOSAL_EXPIRATION_BLOCKS = 1000;
 
+    address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
     address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
 
     function setUp() public {
-        mockVotes = new MockBittensorVotes();
-        target = new MockTarget();
-        mockUidLookup = new MockUidLookup();
-        mockMetagraph = new MockMetagraph();
+        MockBittensorVotes votesImpl = new MockBittensorVotes();
+        MockUidLookup uidImpl = new MockUidLookup();
+        MockMetagraph metagraphImpl = new MockMetagraph();
 
-        vm.etch(UID_LOOKUP_ADDRESS, address(mockUidLookup).code);
-        vm.etch(METAGRAPH_ADDRESS, address(mockMetagraph).code);
+        vm.etch(BITTENSOR_VOTES_ADDRESS, address(votesImpl).code);
+        vm.etch(UID_LOOKUP_ADDRESS, address(uidImpl).code);
+        vm.etch(METAGRAPH_ADDRESS, address(metagraphImpl).code);
+
+        mockVotes = MockBittensorVotes(BITTENSOR_VOTES_ADDRESS);
+        mockUidLookup = MockUidLookup(UID_LOOKUP_ADDRESS);
+        mockMetagraph = MockMetagraph(METAGRAPH_ADDRESS);
+
+        target = new MockTarget();
 
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
@@ -43,7 +50,6 @@ contract TreasuryControllerTest is Test {
 
         controller = new TreasuryController(
             timelock,
-            address(mockVotes),
             TARGET_NETUID,
             "TreasuryDAO",
             7200,
@@ -70,8 +76,8 @@ contract TreasuryControllerTest is Test {
         bytes32 key = bytes32(uint256(uint160(voter)));
         mockVotes.setVotingPower(TARGET_NETUID, key, amount);
 
-        MockUidLookup(UID_LOOKUP_ADDRESS).setLookup(TARGET_NETUID, voter, uid);
-        MockMetagraph(METAGRAPH_ADDRESS).setValidatorStatus(TARGET_NETUID, uid, isValidator);
+        mockUidLookup.setLookup(TARGET_NETUID, voter, uid);
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, uid, isValidator);
     }
 
     function _createProposalArgs(uint256 valueToSet)
@@ -351,7 +357,7 @@ contract TreasuryControllerTest is Test {
 
         _rollToActive();
 
-        MockMetagraph(METAGRAPH_ADDRESS).setValidatorStatus(TARGET_NETUID, 1, false);
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 1, false);
 
         vm.prank(voter1);
         vm.expectRevert("Not a validator");

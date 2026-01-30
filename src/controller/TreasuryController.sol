@@ -29,13 +29,13 @@ interface IBittensorVotes {
 }
 
 contract TreasuryController is Governor, GovernorSettings, GovernorTimelockControl {
-    IBittensorVotes public immutable BITTENSOR_VOTES;
+    address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
+    address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
+    address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
+
     uint16 public immutable TARGET_NETUID;
     uint256 public immutable QUORUM_NUMERATOR;
     uint256 public proposalExpirationBlocks;
-
-    address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
-    address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
 
     struct ProposalTallies {
         address[] voters;
@@ -49,7 +49,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     constructor(
         TimelockController _timelock,
-        address _bittensorVotes,
         uint16 _netuid,
         string memory _name,
         uint48 _initialVotingDelay,
@@ -62,7 +61,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
     GovernorTimelockControl(_timelock)
     {
-        BITTENSOR_VOTES = IBittensorVotes(_bittensorVotes);
         TARGET_NETUID = _netuid;
         QUORUM_NUMERATOR = _quorumNumerator;
         proposalExpirationBlocks = _proposalExpirationBlocks;
@@ -138,7 +136,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     override
     returns (uint256)
     {
-        return BITTENSOR_VOTES.getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(account))));
+        return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(account))));
     }
 
     function quorum(
@@ -150,7 +148,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     override
     returns (uint256)
     {
-        return (BITTENSOR_VOTES.getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
+        return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
     }
 
     function _countVote(
