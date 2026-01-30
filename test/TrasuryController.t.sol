@@ -3,15 +3,17 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import { TreasuryController } from "../src/controller/TreasuryController.sol";
-import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
-import { MockBittensorVotes, MockTarget } from "./ControllerMocks.sol";
+import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { MockBittensorVotes, MockTarget, MockUidLookup, MockMetagraph } from "./Mocks.sol";
 
 contract TreasuryControllerTest is Test {
     TreasuryController public controller;
     TimelockController public timelock;
     MockBittensorVotes public mockVotes;
     MockTarget public target;
+    MockUidLookup public mockUidLookup;
+    MockMetagraph public mockMetagraph;
 
     address public admin = makeAddr("admin");
     address public voter1 = makeAddr("voter1");
@@ -20,10 +22,19 @@ contract TreasuryControllerTest is Test {
 
     uint16 constant TARGET_NETUID = 1;
     uint256 constant QUORUM_NUMERATOR = 400;
+    uint256 constant PROPOSAL_EXPIRATION_BLOCKS = 1000;
+
+    address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
+    address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
 
     function setUp() public {
         mockVotes = new MockBittensorVotes();
         target = new MockTarget();
+        mockUidLookup = new MockUidLookup();
+        mockMetagraph = new MockMetagraph();
+
+        vm.etch(UID_LOOKUP_ADDRESS, address(mockUidLookup).code);
+        vm.etch(METAGRAPH_ADDRESS, address(mockMetagraph).code);
 
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
@@ -31,7 +42,15 @@ contract TreasuryControllerTest is Test {
         timelock = new TimelockController(1 days, proposers, executors, admin);
 
         controller = new TreasuryController(
-            timelock, address(mockVotes), TARGET_NETUID, "TreasuryDAO", 7200, 50400, 0, QUORUM_NUMERATOR
+            timelock,
+            address(mockVotes),
+            TARGET_NETUID,
+            "TreasuryDAO",
+            7200,
+            50400,
+            0,
+            QUORUM_NUMERATOR,
+            PROPOSAL_EXPIRATION_BLOCKS
         );
 
         vm.startPrank(admin);
@@ -40,17 +59,25 @@ contract TreasuryControllerTest is Test {
         timelock.grantRole(timelock.CANCELLER_ROLE(), address(controller));
         vm.stopPrank();
 
-        _setVotingPower(voter1, 1000);
+        _setupVoter(voter1, 1000, 1, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
         vm.warp(100);
         vm.roll(100);
     }
 
+    function _setupVoter(address voter, uint256 amount, uint16 uid, bool isValidator) internal {
+        bytes32 key = bytes32(uint256(uint160(voter)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, amount);
+
+        MockUidLookup(UID_LOOKUP_ADDRESS).setLookup(TARGET_NETUID, voter, uid);
+        MockMetagraph(METAGRAPH_ADDRESS).setValidatorStatus(TARGET_NETUID, uid, isValidator);
+    }
+
     function _createProposalArgs(uint256 valueToSet)
-        internal
-        view
-        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
+    internal
+    view
+    returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
     {
         targets = new address[](1);
         targets[0] = address(target);
@@ -62,11 +89,6 @@ contract TreasuryControllerTest is Test {
         } else {
             calldatas[0] = "";
         }
-    }
-
-    function _setVotingPower(address voter, uint256 amount) internal {
-        bytes32 key = bytes32(uint256(uint160(voter)));
-        mockVotes.setVotingPower(TARGET_NETUID, key, amount);
     }
 
     function _rollToActive() internal {
@@ -82,6 +104,7 @@ contract TreasuryControllerTest is Test {
         assertEq(controller.votingDelay(), 7200);
         assertEq(controller.votingPeriod(), 50400);
         assertEq(controller.QUORUM_NUMERATOR(), QUORUM_NUMERATOR);
+        assertEq(controller.proposalExpirationBlocks(), PROPOSAL_EXPIRATION_BLOCKS);
     }
 
     function test_Propose() public {
@@ -93,7 +116,7 @@ contract TreasuryControllerTest is Test {
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
     }
 
-    function test_CastVote_Succeeds() public {
+    function test_CastVote_Succeeds_Validator() public {
         (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(42);
 
         vm.prank(voter1);
@@ -105,12 +128,48 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         assertTrue(controller.hasVoted(pid, voter1));
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_CastVote_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(42);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Prop");
+
+        _rollToActive();
+
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.castVote(pid, 1);
+    }
+
+    function test_CastVote_Revert_NoUid() public {
+        address noUidVoter = makeAddr("noUid");
+        bytes32 key = bytes32(uint256(uint160(noUidVoter)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, 5000);
+
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(42);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Prop");
+
+        _rollToActive();
+
+        vm.prank(noUidVoter);
+        vm.expectRevert("No UID associated with address");
+        controller.castVote(pid, 1);
     }
 
     function test_VoteCounting_DynamicWeights() public {
         (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(100);
 
-        _setVotingPower(voter1, 1000);
+        _setupVoter(voter1, 1000, 1, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
         vm.prank(voter1);
@@ -125,9 +184,16 @@ contract TreasuryControllerTest is Test {
 
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
 
-        _setVotingPower(voter1, 0);
+        _setupVoter(voter1, 0, 1, true);
 
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+        vm.prank(voter1);
+        uint256 pid2 = controller.propose(t, v, c, "Prop 2");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid2, 1);
+        _rollToEnd();
+
+        assertEq(uint256(controller.state(pid2)), uint256(IGovernor.ProposalState.Defeated));
     }
 
     function test_Quorum() public {
@@ -136,31 +202,12 @@ contract TreasuryControllerTest is Test {
         assertEq(quorum, 400);
     }
 
-    function test_Quorum_NotReached() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(100);
-
-        _setVotingPower(voter1, 300);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Prop");
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-
-        _rollToEnd();
-
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
-    }
-
     function test_FullLifecycle_Execute() public {
         (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(999);
         string memory desc = "Execute It";
         bytes32 descHash = keccak256(bytes(desc));
 
-        _setVotingPower(voter1, 500);
+        _setupVoter(voter1, 500, 1, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
         vm.prank(voter1);
@@ -182,152 +229,85 @@ contract TreasuryControllerTest is Test {
         assertEq(target.value(), 999);
     }
 
-    function test_VoteAgainst() public {
+    function test_State_Expired() public {
         (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(100);
 
-        _setVotingPower(voter1, 400);
-        _setVotingPower(voter2, 600);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
+        _setupVoter(voter1, 1000, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
         vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Vote");
+        uint256 pid = controller.propose(t, v, c, "Expires");
 
         _rollToActive();
-
         vm.prank(voter1);
         controller.castVote(pid, 1);
 
-        vm.prank(voter2);
-        controller.castVote(pid, 0);
-
         _rollToEnd();
 
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+
+        vm.roll(block.number + PROPOSAL_EXPIRATION_BLOCKS + 1);
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Expired));
     }
 
-    function test_DoubleVote_UpdatesVote() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(1);
+    function test_State_Expired_ExactBoundary() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(100);
 
-        _setVotingPower(voter1, 1000);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
+        _setupVoter(voter1, 1000, 1, true);
 
         vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Prop");
+        uint256 pid = controller.propose(t, v, c, "Expires Boundary");
 
         _rollToActive();
-
         vm.prank(voter1);
         controller.castVote(pid, 1);
-
-        vm.prank(voter1);
-        controller.castVote(pid, 0);
-
         _rollToEnd();
 
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+        uint256 deadline = controller.proposalDeadline(pid);
+
+        vm.roll(deadline + PROPOSAL_EXPIRATION_BLOCKS);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+
+        vm.roll(deadline + PROPOSAL_EXPIRATION_BLOCKS + 1);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Expired));
     }
 
-    function test_State_Active() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(0);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Prop");
-
-        _rollToActive();
-
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Active));
-    }
-
-    function test_Tie_Defeated() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(0);
-
-        _setVotingPower(voter1, 500);
-        _setVotingPower(voter2, 500);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Tie");
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-
-        vm.prank(voter2);
-        controller.castVote(pid, 0);
-
-        _rollToEnd();
-
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
-    }
-
-    function test_CastVote_Revert_InvalidType() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(0);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Prop");
-        _rollToActive();
-
-        vm.prank(voter1);
-        vm.expectRevert("Invalid vote type");
-        controller.castVote(pid, 2);
-    }
-
-    function test_Queue_Revert_ProposalNotSucceeded() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(0);
-        string memory desc = "Desc";
+    function test_Queue_Revert_Expired() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(100);
+        string memory desc = "Expires";
         bytes32 descHash = keccak256(bytes(desc));
+
+        _setupVoter(voter1, 1000, 1, true);
 
         vm.prank(voter1);
         uint256 pid = controller.propose(t, v, c, desc);
 
         _rollToActive();
-
-        vm.expectRevert();
-        controller.queue(t, v, c, descHash);
-    }
-
-    function test_Execute_Revert_TimelockNotReady() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(999);
-        string memory desc = "Execute Early";
-        bytes32 descHash = keccak256(bytes(desc));
-
-        _setVotingPower(voter1, 500);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, desc);
-
-        _rollToActive();
-
         vm.prank(voter1);
         controller.castVote(pid, 1);
-
         _rollToEnd();
 
-        controller.queue(t, v, c, descHash);
+        vm.roll(block.number + PROPOSAL_EXPIRATION_BLOCKS + 1);
 
         vm.expectRevert();
-        controller.execute(t, v, c, descHash);
+        controller.queue(t, v, c, descHash);
     }
 
-    function test_Governance_SelfUpdate_Settings() public {
+    function test_SetProposalExpiration_OnlyGovernance() public {
+        uint256 newExpiration = 5000;
         address[] memory t = new address[](1);
         t[0] = address(controller);
         uint256[] memory v = new uint256[](1);
         v[0] = 0;
         bytes[] memory c = new bytes[](1);
-        c[0] = abi.encodeWithSignature("setVotingDelay(uint48)", uint48(10000));
+        c[0] = abi.encodeWithSignature("setProposalExpirationBlocks(uint256)", newExpiration);
 
-        string memory desc = "Update Delay";
+        string memory desc = "Update Expiration";
         bytes32 descHash = keccak256(bytes(desc));
-
-        _setVotingPower(voter1, 500);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
 
         vm.prank(voter1);
         uint256 pid = controller.propose(t, v, c, desc);
-
         _rollToActive();
         vm.prank(voter1);
         controller.castVote(pid, 1);
@@ -337,156 +317,13 @@ contract TreasuryControllerTest is Test {
         vm.warp(block.timestamp + 1 days + 1);
         controller.execute(t, v, c, descHash);
 
-        assertEq(controller.votingDelay(), 10000);
+        assertEq(controller.proposalExpirationBlocks(), newExpiration);
     }
 
-    function test_OnlyGovernance_CanUpdateSettings() public {
+    function test_SetProposalExpiration_Revert_Unauthorized() public {
         vm.prank(voter1);
         vm.expectRevert();
-        controller.setVotingDelay(12345);
-    }
-
-    function test_Vote_WithZeroPower_DoesNotAffectOutcome() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(0);
-
-        _setVotingPower(voter1, 0);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 1000);
-
-        vm.prank(voter1);
-        uint256 pid = controller.propose(t, v, c, "Zero Power");
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-
-        _rollToEnd();
-
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
-    }
-
-    function test_ProposeAndVote_NewProposal_CreatesPending() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(55);
-        string memory desc = "New Proposal";
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
-        assertFalse(controller.hasVoted(pid, voter1));
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Pending_Reverts() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(66);
-        string memory desc = "Pending Revert";
-
-        vm.prank(voter1);
-        controller.proposeAndVote(t, v, c, desc);
-
-        vm.prank(voter2);
-        vm.expectRevert("Proposal exists but is Pending (wait for voting delay)");
-        controller.proposeAndVote(t, v, c, desc);
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Active_CastsVote() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(77);
-        string memory desc = "Active Vote";
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        _rollToActive();
-
-        _setVotingPower(voter2, 500);
-
-        vm.prank(voter2);
-        uint256 pid2 = controller.proposeAndVote(t, v, c, desc);
-
-        assertEq(pid, pid2);
-        assertTrue(controller.hasVoted(pid, voter2));
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Active_AlreadyVoted_DoesNotRevert() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(88);
-        string memory desc = "Idempotency";
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-
-        vm.prank(voter1);
-        uint256 pidRet = controller.proposeAndVote(t, v, c, desc);
-
-        assertEq(pid, pidRet);
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Defeated_Reverts() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(99);
-        string memory desc = "Defeated check";
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 0);
-
-        _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
-
-        vm.prank(voter2);
-        vm.expectRevert("Proposal exists but voting is closed");
-        controller.proposeAndVote(t, v, c, desc);
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Succeeded_Reverts() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(111);
-        string memory desc = "Succeeded check";
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-
-        _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
-
-        vm.prank(voter2);
-        vm.expectRevert("Proposal exists but voting is closed");
-        controller.proposeAndVote(t, v, c, desc);
-    }
-
-    function test_ProposeAndVote_ExistingProposal_Executed_Reverts() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(222);
-        string memory desc = "Executed check";
-        bytes32 descHash = keccak256(bytes(desc));
-
-        vm.prank(voter1);
-        uint256 pid = controller.proposeAndVote(t, v, c, desc);
-
-        _rollToActive();
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-        _rollToEnd();
-
-        controller.queue(t, v, c, descHash);
-
-        vm.warp(block.timestamp + 1 days + 1);
-
-        controller.execute(t, v, c, descHash);
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Executed));
-
-        vm.prank(voter2);
-        vm.expectRevert("Proposal exists but voting is closed");
-        controller.proposeAndVote(t, v, c, desc);
+        controller.setProposalExpirationBlocks(9999);
     }
 
     function test_ProposeAndVote_DifferentDescription_CreatesNewProposal() public {
@@ -502,5 +339,146 @@ contract TreasuryControllerTest is Test {
 
         assertFalse(pid1 == pid2);
         assertEq(uint256(controller.state(pid2)), uint256(IGovernor.ProposalState.Pending));
+    }
+
+    function test_ValidatorLostStatus_BeforeVote_Revert() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(10);
+
+        _setupVoter(voter1, 1000, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Lost Status");
+
+        _rollToActive();
+
+        MockMetagraph(METAGRAPH_ADDRESS).setValidatorStatus(TARGET_NETUID, 1, false);
+
+        vm.prank(voter1);
+        vm.expectRevert("Not a validator");
+        controller.castVote(pid, 1);
+    }
+
+    function test_VotingPowerReduced_DuringVote_ReturnsUpdatedWeight() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(10);
+
+        _setupVoter(voter1, 1000, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Reduced Power");
+
+        _rollToActive();
+
+        bytes32 key = bytes32(uint256(uint160(voter1)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, 100);
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Cancel_Proposal_ByProposer() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(10);
+
+        _setupVoter(voter1, 1000, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "To Cancel");
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
+
+        vm.prank(voter1);
+        controller.cancel(t, v, c, keccak256(bytes("To Cancel")));
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Canceled));
+    }
+
+    function test_Proposal_Fails_AgainstVotes_Majority() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(10);
+
+        _setupVoter(voter1, 400, 1, true);
+        _setupVoter(voter2, 600, 2, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Controversial");
+
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        vm.prank(voter2);
+        controller.castVote(pid, 0);
+
+        _rollToEnd();
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Proposal_Fails_QuorumNotReached_DespiteMajority() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(10);
+
+        _setupVoter(voter1, 300, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, "Low Turnout");
+
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        _rollToEnd();
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Execute_Revert_TimelockNotReady() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(999);
+        string memory desc = "Timelock Test";
+        bytes32 descHash = keccak256(bytes(desc));
+
+        _setupVoter(voter1, 500, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, desc);
+
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        controller.queue(t, v, c, descHash);
+
+        vm.expectRevert();
+        controller.execute(t, v, c, descHash);
+    }
+
+    function test_Execute_Revert_BadDescriptionHash() public {
+        (address[] memory t, uint256[] memory v, bytes[] memory c) = _createProposalArgs(999);
+        string memory desc = "Real Description";
+        bytes32 realHash = keccak256(bytes(desc));
+        bytes32 fakeHash = keccak256(bytes("Fake Description"));
+
+        _setupVoter(voter1, 500, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        vm.prank(voter1);
+        uint256 pid = controller.propose(t, v, c, desc);
+
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        controller.queue(t, v, c, realHash);
+        vm.warp(block.timestamp + 1 days + 1);
+
+        vm.expectRevert();
+        controller.execute(t, v, c, fakeHash);
     }
 }

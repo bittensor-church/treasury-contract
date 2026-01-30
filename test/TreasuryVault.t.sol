@@ -107,7 +107,7 @@ contract TreasuryVaultTest is Test {
     }
 
     function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint96 burnAmount, uint16 netuid, bytes32 hotkey)
-        public
+    public
     {
         vm.assume(burnAmount <= sentAmount);
 
