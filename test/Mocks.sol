@@ -121,12 +121,21 @@ contract MockUidLookup is IUidLookup {
 
 contract MockMetagraph is IMetagraph {
     mapping(uint16 => mapping(uint16 => bool)) public validators;
+    mapping(uint16 => mapping(uint16 => bytes32)) public hotkeys;
 
     function setValidatorStatus(uint16 netuid, uint16 uid, bool status) external {
         validators[netuid][uid] = status;
     }
 
+    function setHotkey(uint16 netuid, uint16 uid, bytes32 hotkey) external {
+        hotkeys[netuid][uid] = hotkey;
+    }
+
     function getValidatorStatus(uint16 netuid, uint16 uid) external view override returns (bool) {
         return validators[netuid][uid];
+    }
+
+    function getHotkey(uint16 netuid, uint16 uid) external view override returns (bytes32) {
+        return hotkeys[netuid][uid];
     }
 }

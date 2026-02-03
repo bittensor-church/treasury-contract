@@ -21,6 +21,7 @@ interface IUidLookup {
 
 interface IMetagraph {
     function getValidatorStatus(uint16 netuid, uint16 uid) external view returns (bool);
+    function getHotkey(uint16 netuid, uint16 uid) external view returns (bytes32);
 }
 
 interface IBittensorVotes {
@@ -111,16 +112,48 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return _proposalTallies[proposalId].support[account] != 0;
     }
 
+    /**
+     * @notice Get UID for an EVM address
+     * @param evmAddress The EVM address to look up
+     * @return uid The UID of the validator (reverts if not found)
+     */
+    function getUidForAddress(address evmAddress) public view returns (uint16) {
+        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, 1);
+        require(items.length > 0, "No UID associated with address");
+        return items[0].uid;
+    }
+
+    /**
+     * @notice Get hotkey (bytes32) for an EVM address
+     * @dev Flow: EVM Address → UID Lookup → Get Hotkey
+     * @param evmAddress The EVM address
+     * @return hotkey The hotkey as bytes32
+     */
+    function getHotkeyForAddress(address evmAddress) public view returns (bytes32) {
+        uint16 uid = getUidForAddress(evmAddress);
+        return IMetagraph(METAGRAPH_ADDRESS).getHotkey(TARGET_NETUID, uid);
+    }
+
+    /**
+     * @notice Get voting power for an EVM address
+     * @dev Flow: EVM Address → UID → Hotkey → Voting Power
+     * @param evmAddress The EVM address of the voter
+     * @return The voting power (EMA of stake) in RAO
+     */
+    function getVotingPowerForAddress(address evmAddress) public view returns (uint256) {
+        bytes32 hotkey = getHotkeyForAddress(evmAddress);
+        return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
+    }
+
     function _castVote(
         uint256 proposalId,
         address account,
         uint8 support,
         string memory reason
     ) internal virtual override returns (uint256) {
-        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, account, 1);
-
-        require(items.length > 0, "No UID associated with address");
-        require(IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, items[0].uid), "Not a validator");
+        // Validate: must have UID and be a validator
+        uint16 uid = getUidForAddress(account);
+        require(IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid), "Not a validator");
 
         return super._castVote(proposalId, account, support, reason);
     }
@@ -136,7 +169,8 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     override
     returns (uint256)
     {
-        return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, bytes32(uint256(uint160(account))));
+        // Proper chain: EVM Address → UID → Hotkey → Voting Power
+        return getVotingPowerForAddress(account);
     }
 
     function quorum(

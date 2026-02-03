@@ -11,14 +11,15 @@ contract DeployGovernance is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
 
-        uint256 minDelay = vm.envOr("MIN_DELAY", uint256(30));
-        uint256 netuid = vm.envOr("NETUID", uint256(1));
+        uint256 minDelay = vm.envOr("MIN_DELAY", uint256(1)); // 1 block delay for testing
+        uint256 netuid = vm.envOr("NETUID", uint256(2));
+        uint256 proposalExpirationBlocks = vm.envOr("PROPOSAL_EXPIRATION", uint256(1000));
 
         string memory govName = vm.envOr("GOV_NAME", string("BittensorDAO"));
         uint256 votingDelayEnv = vm.envOr("VOTING_DELAY", uint256(0));
-        uint256 votingPeriodEnv = vm.envOr("VOTING_PERIOD", uint256(10));
+        uint256 votingPeriodEnv = vm.envOr("VOTING_PERIOD", uint256(5)); // 5 blocks for testing
         uint256 proposalThresholdEnv = vm.envOr("PROPOSAL_THRESHOLD", uint256(0));
-        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(400));
+        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(100)); // 1% quorum for testing
 
         uint48 votingDelay = uint48(votingDelayEnv);
         uint32 votingPeriod = uint32(votingPeriodEnv);
@@ -49,7 +50,8 @@ contract DeployGovernance is Script {
             votingDelay,
             votingPeriod,
             proposalThreshold,
-            quorumNumeratorEnv
+            quorumNumeratorEnv,
+            proposalExpirationBlocks
         );
 
         bytes32 proposerRole = vault.PROPOSER_ROLE();
@@ -61,9 +63,9 @@ contract DeployGovernance is Script {
         vm.stopBroadcast();
 
         console.log("--------------------------------------------------");
-        console.log("MockVotes deployed at:", address(mock));
         console.log("Vault deployed at:    ", address(vault));
         console.log("Governor deployed at: ", address(governor));
         console.log("--------------------------------------------------");
     }
 }
+
