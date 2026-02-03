@@ -139,3 +139,24 @@ contract MockMetagraph is IMetagraph {
         return hotkeys[netuid][uid];
     }
 }
+
+contract MockRegistrationCost {
+    mapping(uint16 => uint256) public burnCosts;
+    mapping(uint16 => bool) public registrationAllowed;
+
+    function setBurn(uint16 netuid, uint256 amount) external {
+        burnCosts[netuid] = amount;
+    }
+
+    function setRegistrationAllowed(uint16 netuid, bool allowed) external {
+        registrationAllowed[netuid] = allowed;
+    }
+
+    function getBurn(uint16 netuid) external view returns (uint256) {
+        return burnCosts[netuid];
+    }
+
+    function isRegistrationAllowed(uint16 netuid) external view returns (bool) {
+        return registrationAllowed[netuid];
+    }
+}

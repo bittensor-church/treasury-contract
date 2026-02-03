@@ -3,14 +3,16 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
-import { MockNeuron, RevertingReceiver } from "./Mocks.sol";
+import { MockNeuron, RevertingReceiver, MockRegistrationCost } from "./Mocks.sol";
 
 contract TreasuryVaultTest is Test {
     TreasuryVault public vault;
     MockNeuron public neuronMock;
+    MockRegistrationCost public registrationCostMock;
     RevertingReceiver public revertingReceiver;
 
     address constant NEURON_PRECOMPILE = 0x0000000000000000000000000000000000000804;
+    address constant REGISTRATION_COST_PRECOMPILE = 0x000000000000000000000000000000000000080e;
 
     address public admin = makeAddr("admin");
     address public proposer = makeAddr("proposer");
@@ -22,6 +24,13 @@ contract TreasuryVaultTest is Test {
     function setUp() public {
         neuronMock = new MockNeuron();
         vm.etch(NEURON_PRECOMPILE, address(neuronMock).code);
+
+        registrationCostMock = new MockRegistrationCost();
+        vm.etch(REGISTRATION_COST_PRECOMPILE, address(registrationCostMock).code);
+
+        // Default: registration allowed with 0 cost
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(1, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(1, 0);
 
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;
@@ -111,6 +120,8 @@ contract TreasuryVaultTest is Test {
     {
         vm.assume(burnAmount <= sentAmount);
 
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(netuid, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(netuid, 0);
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
 
         uint256 initialUserBalance = uint256(sentAmount) + 1 ether;
@@ -178,6 +189,8 @@ contract TreasuryVaultTest is Test {
         uint256 sentAmount = 100_000 ether;
         uint256 burnAmount = 99_999 ether;
 
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(netuid, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(netuid, 0);
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
 
         vm.deal(user, sentAmount);

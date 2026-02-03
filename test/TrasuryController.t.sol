@@ -78,6 +78,7 @@ contract TreasuryControllerTest is Test {
 
         mockUidLookup.setLookup(TARGET_NETUID, voter, uid);
         mockMetagraph.setValidatorStatus(TARGET_NETUID, uid, isValidator);
+        mockMetagraph.setHotkey(TARGET_NETUID, uid, key);
     }
 
     function _createProposalArgs(uint256 valueToSet)
