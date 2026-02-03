@@ -92,10 +92,7 @@ contract MockUidLookup is IUidLookup {
     bool public exists;
 
     function setLookup(uint16 netuid, address addr, uint16 uid) external {
-        lookups[netuid][addr] = LookupItem({
-            uid: uid,
-            block_associated: uint64(block.number)
-        });
+        lookups[netuid][addr] = LookupItem({ uid: uid, block_associated: uint64(block.number) });
         exists = true;
     }
 
@@ -103,11 +100,12 @@ contract MockUidLookup is IUidLookup {
         exists = false;
     }
 
-    function uidLookup(
-        uint16 netuid,
-        address evm_address,
-        uint16
-    ) external view override returns (LookupItem[] memory) {
+    function uidLookup(uint16 netuid, address evm_address, uint16)
+        external
+        view
+        override
+        returns (LookupItem[] memory)
+    {
         LookupItem[] memory items;
         if (exists && lookups[netuid][evm_address].block_associated != 0) {
             items = new LookupItem[](1);

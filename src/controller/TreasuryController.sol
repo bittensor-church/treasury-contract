@@ -12,11 +12,7 @@ struct LookupItem {
 }
 
 interface IUidLookup {
-    function uidLookup(
-        uint16 netuid,
-        address evm_address,
-        uint16 limit
-    ) external view returns (LookupItem[] memory);
+    function uidLookup(uint16 netuid, address evm_address, uint16 limit) external view returns (LookupItem[] memory);
 }
 
 interface IMetagraph {
@@ -58,9 +54,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 _quorumNumerator,
         uint256 _proposalExpirationBlocks
     )
-    Governor(_name)
-    GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
-    GovernorTimelockControl(_timelock)
+        Governor(_name)
+        GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
+        GovernorTimelockControl(_timelock)
     {
         TARGET_NETUID = _netuid;
         QUORUM_NUMERATOR = _quorumNumerator;
@@ -145,12 +141,12 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
     }
 
-    function _castVote(
-        uint256 proposalId,
-        address account,
-        uint8 support,
-        string memory reason
-    ) internal virtual override returns (uint256) {
+    function _castVote(uint256 proposalId, address account, uint8 support, string memory reason)
+        internal
+        virtual
+        override
+        returns (uint256)
+    {
         // Validate: must have UID and be a validator
         uint16 uid = getUidForAddress(account);
         require(IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid), "Not a validator");
@@ -158,43 +154,19 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super._castVote(proposalId, account, support, reason);
     }
 
-    function _getVotes(
-        address account,
-        uint256,
-        bytes memory
-    )
-    internal
-    view
-    virtual
-    override
-    returns (uint256)
-    {
+    function _getVotes(address account, uint256, bytes memory) internal view virtual override returns (uint256) {
         // Proper chain: EVM Address → UID → Hotkey → Voting Power
         return getVotingPowerForAddress(account);
     }
 
-    function quorum(
-        uint256
-    )
-    public
-    view
-    virtual
-    override
-    returns (uint256)
-    {
+    function quorum(uint256) public view virtual override returns (uint256) {
         return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
     }
 
-    function _countVote(
-        uint256 proposalId,
-        address account,
-        uint8 support,
-        uint256,
-        bytes memory
-    )
-    internal
-    virtual
-    override
+    function _countVote(uint256 proposalId, address account, uint8 support, uint256, bytes memory)
+        internal
+        virtual
+        override
     {
         ProposalTallies storage tally = _proposalTallies[proposalId];
         require(support <= 1, "Invalid vote type");
@@ -252,10 +224,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function proposalNeedsQueuing(uint256 proposalId)
-    public
-    view
-    override(Governor, GovernorTimelockControl)
-    returns (bool)
+        public
+        view
+        override(Governor, GovernorTimelockControl)
+        returns (bool)
     {
         return super.proposalNeedsQueuing(proposalId);
     }
