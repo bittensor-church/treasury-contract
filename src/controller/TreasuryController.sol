@@ -35,8 +35,8 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     uint256 public proposalExpirationBlocks;
 
     struct ProposalTallies {
-        address[] voters;
-        mapping(address => uint8) support;
+        bytes32[] votedHotkeys;
+        mapping(bytes32 => uint8) hotkeySupport;
         bool counted;
         uint256 forVotes;
         uint256 againstVotes;
@@ -54,9 +54,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 _quorumNumerator,
         uint256 _proposalExpirationBlocks
     )
-        Governor(_name)
-        GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
-        GovernorTimelockControl(_timelock)
+    Governor(_name)
+    GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
+    GovernorTimelockControl(_timelock)
     {
         TARGET_NETUID = _netuid;
         QUORUM_NUMERATOR = _quorumNumerator;
@@ -105,49 +105,32 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
-        return _proposalTallies[proposalId].support[account] != 0;
+        bytes32 hotkey = getHotkeyForAddress(account);
+        return _proposalTallies[proposalId].hotkeySupport[hotkey] != 0;
     }
 
-    /**
-     * @notice Get UID for an EVM address
-     * @param evmAddress The EVM address to look up
-     * @return uid The UID of the validator (reverts if not found)
-     */
     function getUidForAddress(address evmAddress) public view returns (uint16) {
         LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, 1);
         require(items.length > 0, "No UID associated with address");
         return items[0].uid;
     }
 
-    /**
-     * @notice Get hotkey (bytes32) for an EVM address
-     * @dev Flow: EVM Address → UID Lookup → Get Hotkey
-     * @param evmAddress The EVM address
-     * @return hotkey The hotkey as bytes32
-     */
     function getHotkeyForAddress(address evmAddress) public view returns (bytes32) {
         uint16 uid = getUidForAddress(evmAddress);
         return IMetagraph(METAGRAPH_ADDRESS).getHotkey(TARGET_NETUID, uid);
     }
 
-    /**
-     * @notice Get voting power for an EVM address
-     * @dev Flow: EVM Address → UID → Hotkey → Voting Power
-     * @param evmAddress The EVM address of the voter
-     * @return The voting power (EMA of stake) in RAO
-     */
     function getVotingPowerForAddress(address evmAddress) public view returns (uint256) {
         bytes32 hotkey = getHotkeyForAddress(evmAddress);
         return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
     }
 
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason)
-        internal
-        virtual
-        override
-        returns (uint256)
+    internal
+    virtual
+    override
+    returns (uint256)
     {
-        // Validate: must have UID and be a validator
         uint16 uid = getUidForAddress(account);
         require(IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid), "Not a validator");
 
@@ -155,7 +138,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _getVotes(address account, uint256, bytes memory) internal view virtual override returns (uint256) {
-        // Proper chain: EVM Address → UID → Hotkey → Voting Power
         return getVotingPowerForAddress(account);
     }
 
@@ -164,28 +146,32 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256, bytes memory)
-        internal
-        virtual
-        override
+    internal
+    virtual
+    override
     {
         ProposalTallies storage tally = _proposalTallies[proposalId];
         require(support <= 1, "Invalid vote type");
 
-        if (tally.support[account] == 0) {
-            tally.voters.push(account);
+        bytes32 hotkey = getHotkeyForAddress(account);
+
+        if (tally.hotkeySupport[hotkey] == 0) {
+            tally.votedHotkeys.push(hotkey);
         }
-        tally.support[account] = support + 1;
+        tally.hotkeySupport[hotkey] = support + 1;
     }
 
     function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes, uint256 againstVotes) {
         ProposalTallies storage tally = _proposalTallies[proposalId];
 
-        for (uint256 i = 0; i < tally.voters.length; i++) {
-            address voter = tally.voters[i];
-            uint256 weight = _getVotes(voter, 0, "");
+        for (uint256 i = 0; i < tally.votedHotkeys.length; i++) {
+            bytes32 hotkey = tally.votedHotkeys[i];
 
-            if (tally.support[voter] == 2) forVotes += weight;
-            else if (tally.support[voter] == 1) againstVotes += weight;
+            uint256 weight = IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
+            uint8 support = tally.hotkeySupport[hotkey];
+
+            if (support == 2) forVotes += weight;
+            else if (support == 1) againstVotes += weight;
         }
     }
 
@@ -224,10 +210,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function proposalNeedsQueuing(uint256 proposalId)
-        public
-        view
-        override(Governor, GovernorTimelockControl)
-        returns (bool)
+    public
+    view
+    override(Governor, GovernorTimelockControl)
+    returns (bool)
     {
         return super.proposalNeedsQueuing(proposalId);
     }
