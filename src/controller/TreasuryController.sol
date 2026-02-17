@@ -94,7 +94,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         proposalExpirationBlocks = newExpirationBlocks;
     }
 
-    function propose(address[] memory, uint256[] memory, bytes[] memory, string memory) public override(Governor, GovernorTimelockControl) returns (uint256) {
+    function propose(address[] memory, uint256[] memory, bytes[] memory, string memory) public override(Governor) returns (uint256) {
         revert("Use specific propose functions");
     }
 
@@ -128,7 +128,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
-    function execute(address[] memory, uint256[] memory, bytes[] memory, bytes32) public payable override(Governor, GovernorTimelockControl) returns (uint256) {
+    function execute(address[] memory, uint256[] memory, bytes[] memory, bytes32) public payable override(Governor) returns (uint256) {
         revert("Use specific execute functions");
     }
 
