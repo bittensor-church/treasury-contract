@@ -16,79 +16,164 @@ def load_contract(w3: Web3, contract_address: str, artifact_path: Path):
         if not artifact_path.exists():
             raise FileNotFoundError(f"Artifact not found at {artifact_path}")
         abi = json.loads(artifact_path.read_text())["abi"]
-    except (FileNotFoundError, KeyError) as e:
-        print(f"Error loading ABI: {e}", file=sys.stderr)
-        print("Using minimal fallback ABI...", file=sys.stderr)
+    except (FileNotFoundError, KeyError, AttributeError):
         abi = [
-            # Governor
             {
                 "inputs": [
-                    {"internalType": "address[]", "name": "targets", "type": "address[]"},
-                    {"internalType": "uint256[]", "name": "values", "type": "uint256[]"},
-                    {"internalType": "bytes[]", "name": "calldatas", "type": "bytes[]"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
                     {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "propose",
+                "name": "proposeNativeTransfer",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "nonpayable",
                 "type": "function"
             },
             {
                 "inputs": [
-                    {"internalType": "address[]", "name": "targets", "type": "address[]"},
-                    {"internalType": "uint256[]", "name": "values", "type": "uint256[]"},
-                    {"internalType": "bytes[]", "name": "calldatas", "type": "bytes[]"},
-                    {"internalType": "bytes32", "name": "descriptionHash", "type": "bytes32"}
-                ],
-                "name": "queue",
-                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-                "stateMutability": "nonpayable",
-                "type": "function"
-            },
-            {
-                "inputs": [
-                    {"internalType": "address[]", "name": "targets", "type": "address[]"},
-                    {"internalType": "uint256[]", "name": "values", "type": "uint256[]"},
-                    {"internalType": "bytes[]", "name": "calldatas", "type": "bytes[]"},
-                    {"internalType": "bytes32", "name": "descriptionHash", "type": "bytes32"}
-                ],
-                "name": "execute",
-                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-                "stateMutability": "payable",
-                "type": "function"
-            },
-            # TreasuryVault - addStake removed
-            {
-                "inputs": [
-                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
                     {"internalType": "uint256", "name": "amount", "type": "uint256"},
-                    {"internalType": "uint256", "name": "netuid", "type": "uint256"}
+                    {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "removeStake",
-                "outputs": [],
+                "name": "proposeAndVoteNativeTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "nonpayable",
                 "type": "function"
             },
             {
                 "inputs": [
-                    {"internalType": "bytes32", "name": "fromValidator", "type": "bytes32"},
-                    {"internalType": "bytes32", "name": "toValidator", "type": "bytes32"},
-                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
-                    {"internalType": "uint256", "name": "netuid", "type": "uint256"}
-                ],
-                "name": "transferAlpha",
-                "outputs": [],
-                "stateMutability": "nonpayable",
-                "type": "function"
-            },
-            {
-                "inputs": [
+                    {"internalType": "address", "name": "target", "type": "address"},
                     {"internalType": "uint16", "name": "netuid", "type": "uint16"},
-                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"}
+                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "registerNeuron",
-                "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+                "name": "proposeAlphaTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "target", "type": "address"},
+                    {"internalType": "uint16", "name": "netuid", "type": "uint16"},
+                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "proposeAndVoteAlphaTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "token", "type": "address"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "proposeERC20Transfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "token", "type": "address"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "proposeAndVoteERC20Transfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "queueNativeTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "executeNativeTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "target", "type": "address"},
+                    {"internalType": "uint16", "name": "netuid", "type": "uint16"},
+                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "queueAlphaTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "target", "type": "address"},
+                    {"internalType": "uint16", "name": "netuid", "type": "uint16"},
+                    {"internalType": "bytes32", "name": "hotkey", "type": "bytes32"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "executeAlphaTransfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "token", "type": "address"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "queueERC20Transfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "token", "type": "address"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"},
+                    {"internalType": "string", "name": "description", "type": "string"}
+                ],
+                "name": "executeERC20Transfer",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "uint256", "name": "proposalId", "type": "uint256"},
+                    {"internalType": "uint8", "name": "support", "type": "uint8"}
+                ],
+                "name": "castVote",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "nonpayable",
                 "type": "function"
             }
         ]

@@ -114,6 +114,7 @@ contract TreasuryControllerTest is Test {
     }
 
     function _queueAndExecuteNative(address recipient, uint256 amount, string memory desc) internal {
+        bytes32 descHash = keccak256(bytes(desc));
         controller.queueNativeTransfer(recipient, amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
         controller.executeNativeTransfer(recipient, amount, desc);
@@ -301,6 +302,8 @@ contract TreasuryControllerTest is Test {
 
     function test_Queue_Revert_Expired() public {
         string memory desc = "Expires";
+        bytes32 descHash = keccak256(bytes(desc));
+
         uint256 pid = _createNativeProposal(voter1, 100, desc);
         _passProposal(pid);
 
@@ -503,5 +506,51 @@ contract TreasuryControllerTest is Test {
 
         uint256 currentPeriod = block.timestamp / (RESET_PERIOD_MINUTES * 60);
         assertEq(controller.periodSpent(currentPeriod, bytes32(0)), 0);
+    }
+
+    function test_ProposeAndVote_Native_Lifecycle() public {
+        uint256 amount = 100 ether;
+        string memory desc = "P&V Native";
+
+        vm.prank(voter1);
+        uint256 pid = controller.proposeAndVoteNativeTransfer(address(target), amount, desc);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
+
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.proposeAndVoteNativeTransfer(address(target), amount, desc);
+
+        assertTrue(controller.hasVoted(pid, voter1));
+    }
+
+    function test_ProposeAndVote_ERC20_Lifecycle() public {
+        uint256 amount = 100 ether;
+        string memory desc = "P&V ERC20";
+
+        vm.prank(voter1);
+        uint256 pid = controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), amount, desc);
+
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), amount, desc);
+
+        assertTrue(controller.hasVoted(pid, voter1));
+    }
+
+    function test_ProposeAndVote_Alpha_Lifecycle() public {
+        uint256 amount = 100 ether;
+        string memory desc = "P&V Alpha";
+
+        vm.prank(voter1);
+        uint256 pid = controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
+
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
+
+        assertTrue(controller.hasVoted(pid, voter1));
     }
 }

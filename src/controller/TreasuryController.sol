@@ -102,6 +102,31 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         revert("Use specific propose functions");
     }
 
+    function _proposeAndVote(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description
+    ) internal returns (uint256) {
+        uint256 proposalId = hashProposal(targets, values, calldatas, keccak256(bytes(description)));
+
+        if (proposalSnapshot(proposalId) == 0) {
+            super.propose(targets, values, calldatas, description);
+        } else {
+            ProposalState currentState = state(proposalId);
+
+            if (currentState == ProposalState.Active) {
+                _castVote(proposalId, msg.sender, 1, "");
+            } else if (currentState == ProposalState.Pending) {
+                revert("Proposal exists but is Pending");
+            } else {
+                revert("Proposal exists but voting is closed");
+            }
+        }
+
+        return proposalId;
+    }
+
     function proposeNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
         address[] memory targets = new address[](1);
         uint256[] memory values = new uint256[](1);
@@ -110,6 +135,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         values[0] = amount;
         calldatas[0] = "";
         return super.propose(targets, values, calldatas, description);
+    }
+
+    function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = recipient;
+        values[0] = amount;
+        calldatas[0] = "";
+        return _proposeAndVote(targets, values, calldatas, description);
     }
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
@@ -122,6 +157,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
+    function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = token;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+        return _proposeAndVote(targets, values, calldatas, description);
+    }
+
     function proposeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
         address[] memory targets = new address[](1);
         uint256[] memory values = new uint256[](1);
@@ -130,6 +175,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         values[0] = 0;
         calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
         return super.propose(targets, values, calldatas, description);
+    }
+
+    function proposeAndVoteAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = target;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        return _proposeAndVote(targets, values, calldatas, description);
     }
 
     function queue(address[] memory, uint256[] memory, bytes[] memory, bytes32)
