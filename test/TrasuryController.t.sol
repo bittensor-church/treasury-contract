@@ -5,7 +5,15 @@ import "forge-std/Test.sol";
 import { TreasuryController, IAlphaToken } from "../src/controller/TreasuryController.sol";
 import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
-import { MockBittensorVotes, MockTarget, MockUidLookup, MockMetagraph, MockERC20, MockAlphaToken, RevertingReceiver } from "./Mocks.sol";
+import {
+    MockBittensorVotes,
+    MockTarget,
+    MockUidLookup,
+    MockMetagraph,
+    MockERC20,
+    MockAlphaToken,
+    RevertingReceiver
+} from "./Mocks.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract TreasuryControllerTest is Test {
@@ -144,7 +152,9 @@ contract TreasuryControllerTest is Test {
 
     function test_Propose_Alpha() public {
         vm.prank(voter1);
-        uint256 pid = controller.proposeAlphaTransfer(address(mockAlpha), 1, bytes32("hotkey"), address(target), 100 ether, "Alpha Prop");
+        uint256 pid = controller.proposeAlphaTransfer(
+            address(mockAlpha), 1, bytes32("hotkey"), address(target), 100 ether, "Alpha Prop"
+        );
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
     }
 
@@ -255,7 +265,8 @@ contract TreasuryControllerTest is Test {
         uint256 amount = 300 ether;
         string memory desc = "Alpha Execute";
         vm.prank(voter1);
-        uint256 pid = controller.proposeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
+        uint256 pid =
+            controller.proposeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
         _passProposal(pid);
 
         controller.queueAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
@@ -371,9 +382,12 @@ contract TreasuryControllerTest is Test {
         uint256 pid = _createNativeProposal(voter1, 10, "To Cancel");
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
 
-        address[] memory t = new address[](1); t[0] = address(target);
-        uint256[] memory v = new uint256[](1); v[0] = 10;
-        bytes[] memory c = new bytes[](1); c[0] = "";
+        address[] memory t = new address[](1);
+        t[0] = address(target);
+        uint256[] memory v = new uint256[](1);
+        v[0] = 10;
+        bytes[] memory c = new bytes[](1);
+        c[0] = "";
 
         vm.prank(voter1);
         controller.cancel(t, v, c, keccak256(bytes("To Cancel")));
@@ -544,7 +558,8 @@ contract TreasuryControllerTest is Test {
         string memory desc = "P&V Alpha";
 
         vm.prank(voter1);
-        uint256 pid = controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
+        uint256 pid =
+            controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
 
         _rollToActive();
 
