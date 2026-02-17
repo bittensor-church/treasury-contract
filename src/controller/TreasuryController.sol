@@ -94,7 +94,11 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         proposalExpirationBlocks = newExpirationBlocks;
     }
 
-    function propose(address[] memory, uint256[] memory, bytes[] memory, string memory) public override(Governor) returns (uint256) {
+    function propose(address[] memory, uint256[] memory, bytes[] memory, string memory)
+    public
+    override(Governor)
+    returns (uint256)
+    {
         revert("Use specific propose functions");
     }
 
@@ -128,11 +132,54 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
-    function execute(address[] memory, uint256[] memory, bytes[] memory, bytes32) public payable override(Governor) returns (uint256) {
+    function queue(address[] memory, uint256[] memory, bytes[] memory, bytes32)
+    public
+    override(Governor)
+    returns (uint256)
+    {
+        revert("Use specific queue functions");
+    }
+
+    function queueNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = recipient;
+        values[0] = amount;
+        calldatas[0] = "";
+        return super.queue(targets, values, calldatas, keccak256(bytes(description)));
+    }
+
+    function queueERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = token;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+        return super.queue(targets, values, calldatas, keccak256(bytes(description)));
+    }
+
+    function queueAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        targets[0] = target;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        return super.queue(targets, values, calldatas, keccak256(bytes(description)));
+    }
+
+    function execute(address[] memory, uint256[] memory, bytes[] memory, bytes32)
+    public
+    payable
+    override(Governor)
+    returns (uint256)
+    {
         revert("Use specific execute functions");
     }
 
-    function executeNativeTransfer(address recipient, uint256 amount, bytes32 descriptionHash) external payable returns (uint256) {
+    function executeNativeTransfer(address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(bytes32(0), amount, TAO_LIMIT);
 
         address[] memory targets = new address[](1);
@@ -142,10 +189,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         values[0] = amount;
         calldatas[0] = "";
 
-        return super.execute(targets, values, calldatas, descriptionHash);
+        return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function executeERC20Transfer(address token, address recipient, uint256 amount, bytes32 descriptionHash) external payable returns (uint256) {
+    function executeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(bytes32(uint256(uint160(token))), amount, ERC20_LIMIT);
 
         address[] memory targets = new address[](1);
@@ -155,10 +202,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         values[0] = 0;
         calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
 
-        return super.execute(targets, values, calldatas, descriptionHash);
+        return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function executeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, bytes32 descriptionHash) external payable returns (uint256) {
+    function executeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(keccak256(abi.encode(target, netuid)), amount, ALPHA_LIMIT);
 
         address[] memory targets = new address[](1);
@@ -168,7 +215,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         values[0] = 0;
         calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
 
-        return super.execute(targets, values, calldatas, descriptionHash);
+        return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function _updateLimit(bytes32 assetId, uint256 amount, uint256 limit) internal {
@@ -266,6 +313,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     function clock() public view virtual override returns (uint48) { return uint48(block.number); }
     function CLOCK_MODE() public view virtual override returns (string memory) { return "mode=blocknumber&from=default"; }
     function COUNTING_MODE() public pure virtual override returns (string memory) { return "support=bravo&quorum=for,against"; }
+
     function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) { return super.votingDelay(); }
     function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) { return super.votingPeriod(); }
     function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) { return super.proposalThreshold(); }

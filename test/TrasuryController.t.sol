@@ -114,14 +114,9 @@ contract TreasuryControllerTest is Test {
     }
 
     function _queueAndExecuteNative(address recipient, uint256 amount, string memory desc) internal {
-        bytes32 descHash = keccak256(bytes(desc));
-        address[] memory t = new address[](1); t[0] = recipient;
-        uint256[] memory v = new uint256[](1); v[0] = amount;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
-        controller.queue(t, v, c, descHash);
+        controller.queueNativeTransfer(recipient, amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
-        controller.executeNativeTransfer(recipient, amount, descHash);
+        controller.executeNativeTransfer(recipient, amount, desc);
     }
 
     function test_InitialState() public view {
@@ -159,6 +154,14 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         vm.expectRevert("Use specific propose functions");
         controller.propose(t, v, c, "Generic");
+    }
+
+    function test_Revert_GenericQueue() public {
+        address[] memory t = new address[](1);
+        uint256[] memory v = new uint256[](1);
+        bytes[] memory c = new bytes[](1);
+        vm.expectRevert("Use specific queue functions");
+        controller.queue(t, v, c, bytes32(0));
     }
 
     function test_CastVote_Succeeds_Validator() public {
@@ -240,15 +243,9 @@ contract TreasuryControllerTest is Test {
         uint256 pid = controller.proposeERC20Transfer(address(mockToken), address(target), amount, desc);
         _passProposal(pid);
 
-        bytes32 descHash = keccak256(bytes(desc));
-        address[] memory t = new address[](1); t[0] = address(mockToken);
-        uint256[] memory v = new uint256[](1); v[0] = 0;
-        bytes[] memory c = new bytes[](1);
-        c[0] = abi.encodeWithSelector(IERC20.transfer.selector, address(target), amount);
-
-        controller.queue(t, v, c, descHash);
+        controller.queueERC20Transfer(address(mockToken), address(target), amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
-        controller.executeERC20Transfer(address(mockToken), address(target), amount, descHash);
+        controller.executeERC20Transfer(address(mockToken), address(target), amount, desc);
 
         assertEq(mockToken.balanceOf(address(target)), amount);
     }
@@ -260,18 +257,12 @@ contract TreasuryControllerTest is Test {
         uint256 pid = controller.proposeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
         _passProposal(pid);
 
-        bytes32 descHash = keccak256(bytes(desc));
-        address[] memory t = new address[](1); t[0] = address(mockAlpha);
-        uint256[] memory v = new uint256[](1); v[0] = 0;
-        bytes[] memory c = new bytes[](1);
-        c[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, 5, bytes32("hk"), address(target), amount);
-
-        controller.queue(t, v, c, descHash);
+        controller.queueAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
 
         vm.expectEmit(true, true, true, true);
         emit MockAlphaToken.AlphaTransferred(5, bytes32("hk"), address(target), amount);
-        controller.executeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, descHash);
+        controller.executeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
     }
 
     function test_Revert_GenericExecute() public {
@@ -310,19 +301,13 @@ contract TreasuryControllerTest is Test {
 
     function test_Queue_Revert_Expired() public {
         string memory desc = "Expires";
-        bytes32 descHash = keccak256(bytes(desc));
-
         uint256 pid = _createNativeProposal(voter1, 100, desc);
         _passProposal(pid);
 
         vm.roll(block.number + PROPOSAL_EXPIRATION_BLOCKS + 1);
 
-        address[] memory t = new address[](1); t[0] = address(target);
-        uint256[] memory v = new uint256[](1); v[0] = 100;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
         vm.expectRevert();
-        controller.queue(t, v, c, descHash);
+        controller.queueNativeTransfer(address(target), 100, desc);
     }
 
     function test_SetProposalExpiration_Revert_ViaGeneric() public {
@@ -430,34 +415,25 @@ contract TreasuryControllerTest is Test {
         uint256 pid = _createNativeProposal(voter1, amount, desc);
         _passProposal(pid);
 
-        address[] memory t = new address[](1); t[0] = address(target);
-        uint256[] memory v = new uint256[](1); v[0] = amount;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
-        controller.queue(t, v, c, descHash);
+        controller.queueNativeTransfer(address(target), amount, desc);
 
         vm.expectRevert();
-        controller.executeNativeTransfer(address(target), amount, descHash);
+        controller.executeNativeTransfer(address(target), amount, desc);
     }
 
     function test_Execute_Revert_BadDescriptionHash() public {
         uint256 amount = 999;
         string memory desc = "Real Description";
-        bytes32 realHash = keccak256(bytes(desc));
-        bytes32 fakeHash = keccak256(bytes("Fake Description"));
+        string memory fakeDesc = "Fake Description";
 
         uint256 pid = _createNativeProposal(voter1, amount, desc);
         _passProposal(pid);
 
-        address[] memory t = new address[](1); t[0] = address(target);
-        uint256[] memory v = new uint256[](1); v[0] = amount;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
-        controller.queue(t, v, c, realHash);
+        controller.queueNativeTransfer(address(target), amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
 
         vm.expectRevert();
-        controller.executeNativeTransfer(address(target), amount, fakeHash);
+        controller.executeNativeTransfer(address(target), amount, fakeDesc);
     }
 
     function test_RateLimit_Enforcement() public {
@@ -477,26 +453,15 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid2, 1);
         _rollToEnd();
 
-        bytes32 h1 = keccak256(bytes(desc1));
-        bytes32 h2 = keccak256(bytes(desc2));
-
-        address[] memory t1 = new address[](1); t1[0] = address(target);
-        uint256[] memory v1 = new uint256[](1); v1[0] = amount1;
-        bytes[] memory c1 = new bytes[](1); c1[0] = "";
-
-        address[] memory t2 = new address[](1); t2[0] = address(target);
-        uint256[] memory v2 = new uint256[](1); v2[0] = amount2;
-        bytes[] memory c2 = new bytes[](1); c2[0] = "";
-
-        controller.queue(t1, v1, c1, h1);
-        controller.queue(t2, v2, c2, h2);
+        controller.queueNativeTransfer(address(target), amount1, desc1);
+        controller.queueNativeTransfer(address(target), amount2, desc2);
 
         vm.warp(block.timestamp + 1 days + 1);
 
-        controller.executeNativeTransfer(address(target), amount1, h1);
+        controller.executeNativeTransfer(address(target), amount1, desc1);
 
         vm.expectRevert("Limit exceeded");
-        controller.executeNativeTransfer(address(target), amount2, h2);
+        controller.executeNativeTransfer(address(target), amount2, desc2);
     }
 
     function test_RateLimit_Reset() public {
@@ -512,15 +477,10 @@ contract TreasuryControllerTest is Test {
         uint256 pid2 = _createNativeProposal(voter1, 100 ether, desc2);
         _passProposal(pid2);
 
-        bytes32 h2 = keccak256(bytes(desc2));
-        address[] memory t = new address[](1); t[0] = address(target);
-        uint256[] memory v = new uint256[](1); v[0] = 100 ether;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
-        controller.queue(t, v, c, h2);
+        controller.queueNativeTransfer(address(target), 100 ether, desc2);
         vm.warp(block.timestamp + 1 days + 1);
 
-        controller.executeNativeTransfer(address(target), 100 ether, h2);
+        controller.executeNativeTransfer(address(target), 100 ether, desc2);
         assertEq(address(target).balance, amount + 100 ether);
     }
 
@@ -535,16 +495,11 @@ contract TreasuryControllerTest is Test {
         uint256 pid = controller.proposeNativeTransfer(address(failTarget), amount, desc);
         _passProposal(pid);
 
-        bytes32 descHash = keccak256(bytes(desc));
-        address[] memory t = new address[](1); t[0] = address(failTarget);
-        uint256[] memory v = new uint256[](1); v[0] = amount;
-        bytes[] memory c = new bytes[](1); c[0] = "";
-
-        controller.queue(t, v, c, descHash);
+        controller.queueNativeTransfer(address(failTarget), amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
 
         vm.expectRevert("I refuse refunds");
-        controller.executeNativeTransfer(address(failTarget), amount, descHash);
+        controller.executeNativeTransfer(address(failTarget), amount, desc);
 
         uint256 currentPeriod = block.timestamp / (RESET_PERIOD_MINUTES * 60);
         assertEq(controller.periodSpent(currentPeriod, bytes32(0)), 0);
