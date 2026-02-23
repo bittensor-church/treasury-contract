@@ -36,7 +36,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
 
     uint16 public immutable TARGET_NETUID;
-    uint256 public immutable QUORUM_NUMERATOR;
+    uint256 public immutable SUPPORT_THRESHOLD_NUMERATOR;
 
     uint256 public immutable TAO_LIMIT;
     uint256 public immutable ALPHA_LIMIT;
@@ -69,7 +69,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint48 _initialVotingDelay,
         uint32 _initialVotingPeriod,
         uint256 _initialProposalThreshold,
-        uint256 _quorumNumerator,
+        uint256 _supportThresholdNumerator,
         uint256 _proposalExpirationBlocks,
         uint256 _taoLimit,
         uint256 _alphaLimit,
@@ -81,7 +81,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     GovernorTimelockControl(_timelock)
     {
         TARGET_NETUID = _netuid;
-        QUORUM_NUMERATOR = _quorumNumerator;
+        SUPPORT_THRESHOLD_NUMERATOR = _supportThresholdNumerator;
         proposalExpirationBlocks = _proposalExpirationBlocks;
 
         TAO_LIMIT = _taoLimit;
@@ -92,6 +92,33 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function setProposalExpirationBlocks(uint256 newExpirationBlocks) external onlyGovernance {
         proposalExpirationBlocks = newExpirationBlocks;
+    }
+
+    function _buildNativePayload(address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+        targets = new address[](1);
+        values = new uint256[](1);
+        calldatas = new bytes[](1);
+        targets[0] = recipient;
+        values[0] = amount;
+        calldatas[0] = "";
+    }
+
+    function _buildERC20Payload(address token, address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+        targets = new address[](1);
+        values = new uint256[](1);
+        calldatas = new bytes[](1);
+        targets[0] = token;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+    }
+
+    function _buildAlphaPayload(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+        targets = new address[](1);
+        values = new uint256[](1);
+        calldatas = new bytes[](1);
+        targets[0] = target;
+        values[0] = 0;
+        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
     }
 
     function propose(address[] memory, uint256[] memory, bytes[] memory, string memory)
@@ -128,62 +155,32 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function proposeNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = recipient;
-        values[0] = amount;
-        calldatas[0] = "";
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
     function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = recipient;
-        values[0] = amount;
-        calldatas[0] = "";
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = token;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
     function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = token;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
     function proposeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = target;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
     function proposeAndVoteAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = target;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
@@ -196,32 +193,17 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function queueNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = recipient;
-        values[0] = amount;
-        calldatas[0] = "";
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function queueERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = token;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function queueAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = target;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -236,40 +218,19 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function executeNativeTransfer(address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(bytes32(0), amount, TAO_LIMIT);
-
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = recipient;
-        values[0] = amount;
-        calldatas[0] = "";
-
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function executeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(bytes32(uint256(uint160(token))), amount, ERC20_LIMIT);
-
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = token;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
-
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function executeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
         _updateLimit(keccak256(abi.encode(target, netuid)), amount, ALPHA_LIMIT);
-
-        address[] memory targets = new address[](1);
-        uint256[] memory values = new uint256[](1);
-        bytes[] memory calldatas = new bytes[](1);
-        targets[0] = target;
-        values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
-
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -315,7 +276,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function quorum(uint256) public view virtual override returns (uint256) {
-        return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * QUORUM_NUMERATOR) / 10000;
+        return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * SUPPORT_THRESHOLD_NUMERATOR) / 10000;
     }
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256, bytes memory)
@@ -346,13 +307,13 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes, uint256 againstVotes) = _getTallyResult(proposalId);
-        return quorum(proposalSnapshot(proposalId)) <= (forVotes + againstVotes);
+        (uint256 forVotes, ) = _getTallyResult(proposalId);
+        return forVotes >= quorum(proposalSnapshot(proposalId));
     }
 
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes, uint256 againstVotes) = _getTallyResult(proposalId);
-        return forVotes > againstVotes;
+        (uint256 forVotes, ) = _getTallyResult(proposalId);
+        return forVotes >= quorum(proposalSnapshot(proposalId));
     }
 
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {

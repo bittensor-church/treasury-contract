@@ -24,7 +24,7 @@ contract TreasuryControllerTest is Test {
     address public voter3 = makeAddr("voter3");
 
     uint16 constant TARGET_NETUID = 1;
-    uint256 constant QUORUM_NUMERATOR = 400;
+    uint256 constant SUPPORT_THRESHOLD_NUMERATOR = 400;
     uint256 constant PROPOSAL_EXPIRATION_BLOCKS = 1000;
     uint256 constant TAO_LIMIT = 1000 ether;
     uint256 constant ALPHA_LIMIT = 5000 ether;
@@ -64,7 +64,7 @@ contract TreasuryControllerTest is Test {
             7200,
             50400,
             0,
-            QUORUM_NUMERATOR,
+            SUPPORT_THRESHOLD_NUMERATOR,
             PROPOSAL_EXPIRATION_BLOCKS,
             TAO_LIMIT,
             ALPHA_LIMIT,
@@ -124,7 +124,7 @@ contract TreasuryControllerTest is Test {
         assertEq(controller.name(), "TreasuryDAO");
         assertEq(controller.votingDelay(), 7200);
         assertEq(controller.votingPeriod(), 50400);
-        assertEq(controller.QUORUM_NUMERATOR(), QUORUM_NUMERATOR);
+        assertEq(controller.SUPPORT_THRESHOLD_NUMERATOR(), SUPPORT_THRESHOLD_NUMERATOR);
         assertEq(controller.proposalExpirationBlocks(), PROPOSAL_EXPIRATION_BLOCKS);
         assertEq(controller.TAO_LIMIT(), TAO_LIMIT);
         assertEq(controller.ERC20_LIMIT(), ERC20_LIMIT);
@@ -381,7 +381,7 @@ contract TreasuryControllerTest is Test {
     }
 
     function test_Proposal_Fails_AgainstVotes_Majority() public {
-        _setupVoter(voter1, 400, 1, true);
+        _setupVoter(voter1, 399, 1, true);
         _setupVoter(voter2, 600, 2, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
@@ -552,5 +552,64 @@ contract TreasuryControllerTest is Test {
         controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
 
         assertTrue(controller.hasVoted(pid, voter1));
+    }
+
+    function test_NewMechanism_Succeeds_ExactlyOnThreshold() public {
+        _setupVoter(voter1, 400, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Exact Threshold");
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_NewMechanism_Succeeds_DespiteAgainstMajority() public {
+        _setupVoter(voter1, 400, 1, true);
+        _setupVoter(voter2, 9600, 2, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Threshold Reached With Heavy Against");
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        vm.prank(voter2);
+        controller.castVote(pid, 0);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_NewMechanism_Defeated_BelowThreshold() public {
+        _setupVoter(voter1, 399, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Below Threshold");
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_NewMechanism_AgainstVotes_DoNotContributeToThreshold() public {
+        _setupVoter(voter1, 10000, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Only Against");
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 0);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
 }
