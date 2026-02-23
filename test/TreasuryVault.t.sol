@@ -117,7 +117,7 @@ contract TreasuryVaultTest is Test {
     }
 
     function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint96 burnAmount, uint16 netuid, bytes32 hotkey)
-    public
+        public
     {
         vm.assume(burnAmount <= sentAmount);
         vm.assume(netuid != 0);
@@ -162,7 +162,9 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, 5 ether);
         vm.prank(user);
 
-        vm.expectRevert(abi.encodeWithSelector(TreasuryVault.InsufficientTaoForRegistration.selector, burnAmount, sentAmount));
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryVault.InsufficientTaoForRegistration.selector, burnAmount, sentAmount)
+        );
         vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
     }
 

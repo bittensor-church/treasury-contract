@@ -2,7 +2,13 @@
 pragma solidity ^0.8.24;
 
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
-import { IBittensorVotes, IUidLookup, IMetagraph, LookupItem, IAlphaToken } from "../src/controller/TreasuryController.sol";
+import {
+    IBittensorVotes,
+    IUidLookup,
+    IMetagraph,
+    LookupItem,
+    IAlphaToken
+} from "../src/controller/TreasuryController.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface Vm {
@@ -87,8 +93,9 @@ contract MockTarget {
     uint256 public value;
     // Receive przyjmuje ETH, ale nie aktualizuje zmiennej `value`.
     // Testy powinny sprawdzać address(this).balance.
-    receive() external payable {}
-    fallback() external payable {}
+    receive() external payable { }
+    fallback() external payable { }
+
     function setValue(uint256 _value) external {
         value = _value;
     }
@@ -108,10 +115,10 @@ contract MockUidLookup is IUidLookup {
     }
 
     function uidLookup(uint16 netuid, address evm_address, uint16)
-    external
-    view
-    override
-    returns (LookupItem[] memory)
+        external
+        view
+        override
+        returns (LookupItem[] memory)
     {
         LookupItem[] memory items;
         if (exists && lookups[netuid][evm_address].block_associated != 0) {
@@ -200,10 +207,10 @@ contract MockERC20 is IERC20 {
     }
 }
 
-contract MockAlphaToken is IAlphaToken {
-    event AlphaTransferred(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount);
+    contract MockAlphaToken is IAlphaToken {
+        event AlphaTransferred(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount);
 
-    function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external {
-        emit AlphaTransferred(netuid, hotkey, recipient, amount);
+        function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external {
+            emit AlphaTransferred(netuid, hotkey, recipient, amount);
+        }
     }
-}
