@@ -76,9 +76,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 _erc20Limit,
         uint256 _limitResetPeriodMinutes
     )
-    Governor(_name)
-    GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
-    GovernorTimelockControl(_timelock)
+        Governor(_name)
+        GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
+        GovernorTimelockControl(_timelock)
     {
         TARGET_NETUID = _netuid;
         SUPPORT_THRESHOLD_NUMERATOR = _supportThresholdNumerator;
@@ -94,7 +94,11 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         proposalExpirationBlocks = newExpirationBlocks;
     }
 
-    function _buildNativePayload(address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+    function _buildNativePayload(address recipient, uint256 amount)
+        internal
+        pure
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
+    {
         targets = new address[](1);
         values = new uint256[](1);
         calldatas = new bytes[](1);
@@ -103,7 +107,11 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         calldatas[0] = "";
     }
 
-    function _buildERC20Payload(address token, address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+    function _buildERC20Payload(address token, address recipient, uint256 amount)
+        internal
+        pure
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
+    {
         targets = new address[](1);
         values = new uint256[](1);
         calldatas = new bytes[](1);
@@ -112,7 +120,11 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
     }
 
-    function _buildAlphaPayload(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
+    function _buildAlphaPayload(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount)
+        internal
+        pure
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
+    {
         targets = new address[](1);
         values = new uint256[](1);
         calldatas = new bytes[](1);
@@ -122,9 +134,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function propose(address[] memory, uint256[] memory, bytes[] memory, string memory)
-    public
-    override(Governor)
-    returns (uint256)
+        public
+        override(Governor)
+        returns (uint256)
     {
         revert("Use specific propose functions");
     }
@@ -154,83 +166,149 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return proposalId;
     }
 
-    function proposeNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
+    function proposeNativeTransfer(address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildNativePayload(recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
+    function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildNativePayload(recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
-    function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
+    function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildERC20Payload(token, recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
+    function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildERC20Payload(token, recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
-    function proposeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+    function proposeAlphaTransfer(
+        address target,
+        uint16 netuid,
+        bytes32 hotkey,
+        address recipient,
+        uint256 amount,
+        string memory description
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+    function proposeAndVoteAlphaTransfer(
+        address target,
+        uint16 netuid,
+        bytes32 hotkey,
+        address recipient,
+        uint256 amount,
+        string memory description
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
     function queue(address[] memory, uint256[] memory, bytes[] memory, bytes32)
-    public
-    override(Governor)
-    returns (uint256)
+        public
+        override(Governor)
+        returns (uint256)
     {
         revert("Use specific queue functions");
     }
 
-    function queueNativeTransfer(address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
+    function queueNativeTransfer(address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildNativePayload(recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function queueERC20Transfer(address token, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
+    function queueERC20Transfer(address token, address recipient, uint256 amount, string memory description)
+        external
+        returns (uint256)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildERC20Payload(token, recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function queueAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+    function queueAlphaTransfer(
+        address target,
+        uint16 netuid,
+        bytes32 hotkey,
+        address recipient,
+        uint256 amount,
+        string memory description
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
     function execute(address[] memory, uint256[] memory, bytes[] memory, bytes32)
-    public
-    payable
-    override(Governor)
-    returns (uint256)
+        public
+        payable
+        override(Governor)
+        returns (uint256)
     {
         revert("Use specific execute functions");
     }
 
-    function executeNativeTransfer(address recipient, uint256 amount, string memory description) external payable returns (uint256) {
+    function executeNativeTransfer(address recipient, uint256 amount, string memory description)
+        external
+        payable
+        returns (uint256)
+    {
         _updateLimit(bytes32(0), amount, TAO_LIMIT);
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildNativePayload(recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildNativePayload(recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function executeERC20Transfer(address token, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
+    function executeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
+        external
+        payable
+        returns (uint256)
+    {
         _updateLimit(bytes32(uint256(uint160(token))), amount, ERC20_LIMIT);
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildERC20Payload(token, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildERC20Payload(token, recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
-    function executeAlphaTransfer(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount, string memory description) external payable returns (uint256) {
+    function executeAlphaTransfer(
+        address target,
+        uint16 netuid,
+        bytes32 hotkey,
+        address recipient,
+        uint256 amount,
+        string memory description
+    ) external payable returns (uint256) {
         _updateLimit(keccak256(abi.encode(target, netuid)), amount, ALPHA_LIMIT);
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -262,11 +340,11 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason)
-    internal
-    virtual
-    override
-    onlyValidator(account)
-    returns (uint256)
+        internal
+        virtual
+        override
+        onlyValidator(account)
+        returns (uint256)
     {
         return super._castVote(proposalId, account, support, reason);
     }
@@ -276,13 +354,14 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function quorum(uint256) public view virtual override returns (uint256) {
-        return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * SUPPORT_THRESHOLD_NUMERATOR) / 10000;
+        return (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID)
+                * SUPPORT_THRESHOLD_NUMERATOR) / 10000;
     }
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256, bytes memory)
-    internal
-    virtual
-    override
+        internal
+        virtual
+        override
     {
         ProposalTallies storage tally = _proposalTallies[proposalId];
         require(support <= 1, "Invalid vote");
@@ -307,12 +386,12 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes, ) = _getTallyResult(proposalId);
+        (uint256 forVotes,) = _getTallyResult(proposalId);
         return forVotes >= quorum(proposalSnapshot(proposalId));
     }
 
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes, ) = _getTallyResult(proposalId);
+        (uint256 forVotes,) = _getTallyResult(proposalId);
         return forVotes >= quorum(proposalSnapshot(proposalId));
     }
 
@@ -326,27 +405,65 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return currentState;
     }
 
-    function clock() public view virtual override returns (uint48) { return uint48(block.number); }
-    function CLOCK_MODE() public view virtual override returns (string memory) { return "mode=blocknumber&from=default"; }
-    function COUNTING_MODE() public pure virtual override returns (string memory) { return "support=bravo&quorum=for,against"; }
+    function clock() public view virtual override returns (uint48) {
+        return uint48(block.number);
+    }
 
-    function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) { return super.votingDelay(); }
-    function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) { return super.votingPeriod(); }
-    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) { return super.proposalThreshold(); }
+    function CLOCK_MODE() public view virtual override returns (string memory) {
+        return "mode=blocknumber&from=default";
+    }
 
-    function proposalNeedsQueuing(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (bool) {
+    function COUNTING_MODE() public pure virtual override returns (string memory) {
+        return "support=bravo&quorum=for,against";
+    }
+
+    function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) {
+        return super.votingDelay();
+    }
+
+    function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) {
+        return super.votingPeriod();
+    }
+
+    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
+        return super.proposalThreshold();
+    }
+
+    function proposalNeedsQueuing(uint256 proposalId)
+        public
+        view
+        override(Governor, GovernorTimelockControl)
+        returns (bool)
+    {
         return super.proposalNeedsQueuing(proposalId);
     }
 
-    function _queueOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint48) {
+    function _queueOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) returns (uint48) {
         return super._queueOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    function _executeOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) {
+    function _executeOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) {
         super._executeOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    function _cancel(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint256) {
+    function _cancel(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) returns (uint256) {
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 
