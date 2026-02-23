@@ -3,14 +3,16 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
-import { MockNeuron, RevertingReceiver } from "./Mocks.sol";
+import { MockNeuron, RevertingReceiver, MockRegistrationCost } from "./Mocks.sol";
 
 contract TreasuryVaultTest is Test {
     TreasuryVault public vault;
     MockNeuron public neuronMock;
+    MockRegistrationCost public registrationCostMock;
     RevertingReceiver public revertingReceiver;
 
     address constant NEURON_PRECOMPILE = 0x0000000000000000000000000000000000000804;
+    address constant REGISTRATION_COST_PRECOMPILE = 0x000000000000000000000000000000000000080e;
 
     address public admin = makeAddr("admin");
     address public proposer = makeAddr("proposer");
@@ -23,12 +25,20 @@ contract TreasuryVaultTest is Test {
         neuronMock = new MockNeuron();
         vm.etch(NEURON_PRECOMPILE, address(neuronMock).code);
 
+        registrationCostMock = new MockRegistrationCost();
+        vm.etch(REGISTRATION_COST_PRECOMPILE, address(registrationCostMock).code);
+
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(1, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(1, 0);
+
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;
         address[] memory executors = new address[](1);
         executors[0] = executor;
 
         vault = new TreasuryVault(1 days, proposers, executors, admin);
+
+        vm.deal(address(neuronMock), 1000 ether);
     }
 
     function test_RegisterNeuron_Success_NoBurn() public {
@@ -107,10 +117,13 @@ contract TreasuryVaultTest is Test {
     }
 
     function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint96 burnAmount, uint16 netuid, bytes32 hotkey)
-    public
+        public
     {
         vm.assume(burnAmount <= sentAmount);
+        vm.assume(netuid != 0);
 
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(netuid, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(netuid, 0);
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
 
         uint256 initialUserBalance = uint256(sentAmount) + 1 ether;
@@ -138,26 +151,25 @@ contract TreasuryVaultTest is Test {
         assertEq(address(vault).balance, 100 ether);
     }
 
-    function test_RegisterNeuron_BurnExceedsMsgValue_UsesVaultFunds() public {
+    function test_RegisterNeuron_BurnExceedsMsgValue_Revert() public {
         vm.deal(address(vault), 10 ether);
-
         uint256 sentAmount = 1 ether;
         uint256 burnAmount = 2 ether;
 
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(1, burnAmount);
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
 
         vm.deal(user, 5 ether);
         vm.prank(user);
 
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryVault.InsufficientTaoForRegistration.selector, burnAmount, sentAmount)
+        );
         vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
-
-        assertEq(user.balance, 4 ether);
-        assertEq(address(vault).balance, 10 ether + sentAmount - burnAmount);
     }
 
     function test_RegisterNeuron_Revert_BalanceIncrease_Panic() public {
         uint256 sentAmount = 1 ether;
-
         MockNeuron(NEURON_PRECOMPILE).setMintAmount(1 ether);
 
         vm.deal(user, 5 ether);
@@ -177,7 +189,10 @@ contract TreasuryVaultTest is Test {
     function testFuzz_RegisterNeuron_HighValues(uint16 netuid, bytes32 hotkey) public {
         uint256 sentAmount = 100_000 ether;
         uint256 burnAmount = 99_999 ether;
+        vm.assume(netuid != 0);
 
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(netuid, true);
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setBurn(netuid, 0);
         MockNeuron(NEURON_PRECOMPILE).setBurnAmount(burnAmount);
 
         vm.deal(user, sentAmount);
@@ -185,5 +200,14 @@ contract TreasuryVaultTest is Test {
         vault.registerNeuron{ value: sentAmount }(netuid, hotkey);
 
         assertEq(user.balance, sentAmount - burnAmount);
+    }
+
+    function test_RegisterNeuron_NotAllowed() public {
+        MockRegistrationCost(REGISTRATION_COST_PRECOMPILE).setRegistrationAllowed(1, false);
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+
+        vm.expectRevert(abi.encodeWithSelector(TreasuryVault.RegistrationNotAllowed.selector, 1));
+        vault.registerNeuron{ value: 1 ether }(1, bytes32("hotkey"));
     }
 }

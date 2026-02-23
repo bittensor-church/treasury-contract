@@ -2,14 +2,23 @@
 pragma solidity ^0.8.24;
 
 import { TreasuryVault } from "../src/vault/TreasuryVault.sol";
-import { IBittensorVotes, IUidLookup, IMetagraph, LookupItem } from "../src/controller/TreasuryController.sol";
+import {
+    IBittensorVotes,
+    IUidLookup,
+    IMetagraph,
+    LookupItem,
+    IAlphaToken
+} from "../src/controller/TreasuryController.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface Vm {
     function deal(address who, uint256 newBalance) external;
 }
 
 contract MockNeuron {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    // Obliczamy adres cheat code'u (hevm)
+    address constant VM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
+    Vm constant vm = Vm(VM_ADDRESS);
 
     bool public shouldFail;
     uint256 public burnAmount;
@@ -21,8 +30,11 @@ contract MockNeuron {
         }
 
         if (burnAmount > 0) {
-            if (msg.sender.balance >= burnAmount) {
-                vm.deal(msg.sender, msg.sender.balance - burnAmount);
+            // Symulujemy działanie precompile: zabieramy ETH od wołającego (Vaulta)
+            // msg.sender to TreasuryVault.
+            uint256 currentBalance = msg.sender.balance;
+            if (currentBalance >= burnAmount) {
+                vm.deal(msg.sender, currentBalance - burnAmount);
             } else {
                 vm.deal(msg.sender, 0);
             }
@@ -39,12 +51,10 @@ contract MockNeuron {
 
     function setBurnAmount(uint256 _amount) external {
         burnAmount = _amount;
-        mintAmount = 0;
     }
 
     function setMintAmount(uint256 _amount) external {
         mintAmount = _amount;
-        burnAmount = 0;
     }
 }
 
@@ -81,6 +91,10 @@ contract MockBittensorVotes is IBittensorVotes {
 
 contract MockTarget {
     uint256 public value;
+    // Receive przyjmuje ETH, ale nie aktualizuje zmiennej `value`.
+    // Testy powinny sprawdzać address(this).balance.
+    receive() external payable { }
+    fallback() external payable { }
 
     function setValue(uint256 _value) external {
         value = _value;
@@ -92,10 +106,7 @@ contract MockUidLookup is IUidLookup {
     bool public exists;
 
     function setLookup(uint16 netuid, address addr, uint16 uid) external {
-        lookups[netuid][addr] = LookupItem({
-            uid: uid,
-            block_associated: uint64(block.number)
-        });
+        lookups[netuid][addr] = LookupItem({ uid: uid, block_associated: uint64(block.number) });
         exists = true;
     }
 
@@ -103,11 +114,12 @@ contract MockUidLookup is IUidLookup {
         exists = false;
     }
 
-    function uidLookup(
-        uint16 netuid,
-        address evm_address,
-        uint16
-    ) external view override returns (LookupItem[] memory) {
+    function uidLookup(uint16 netuid, address evm_address, uint16)
+        external
+        view
+        override
+        returns (LookupItem[] memory)
+    {
         LookupItem[] memory items;
         if (exists && lookups[netuid][evm_address].block_associated != 0) {
             items = new LookupItem[](1);
@@ -121,12 +133,84 @@ contract MockUidLookup is IUidLookup {
 
 contract MockMetagraph is IMetagraph {
     mapping(uint16 => mapping(uint16 => bool)) public validators;
+    mapping(uint16 => mapping(uint16 => bytes32)) public hotkeys;
 
     function setValidatorStatus(uint16 netuid, uint16 uid, bool status) external {
         validators[netuid][uid] = status;
     }
 
+    function setHotkey(uint16 netuid, uint16 uid, bytes32 hotkey) external {
+        hotkeys[netuid][uid] = hotkey;
+    }
+
     function getValidatorStatus(uint16 netuid, uint16 uid) external view override returns (bool) {
         return validators[netuid][uid];
     }
+
+    function getHotkey(uint16 netuid, uint16 uid) external view override returns (bytes32) {
+        return hotkeys[netuid][uid];
+    }
 }
+
+contract MockRegistrationCost {
+    mapping(uint16 => uint256) public burnCosts;
+    mapping(uint16 => bool) public registrationAllowed;
+
+    function setBurn(uint16 netuid, uint256 amount) external {
+        burnCosts[netuid] = amount;
+    }
+
+    function setRegistrationAllowed(uint16 netuid, bool allowed) external {
+        registrationAllowed[netuid] = allowed;
+    }
+
+    function getBurn(uint16 netuid) external view returns (uint256) {
+        return burnCosts[netuid];
+    }
+
+    function isRegistrationAllowed(uint16 netuid) external view returns (bool) {
+        return registrationAllowed[netuid];
+    }
+}
+
+contract MockERC20 is IERC20 {
+    mapping(address => uint256) public override balanceOf;
+    mapping(address => mapping(address => uint256)) public override allowance;
+    uint256 public override totalSupply;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+    }
+
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external override returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external override returns (bool) {
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+            allowance[from][msg.sender] -= amount;
+        }
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
+    contract MockAlphaToken is IAlphaToken {
+        event AlphaTransferred(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount);
+
+        function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external {
+            emit AlphaTransferred(netuid, hotkey, recipient, amount);
+        }
+    }
