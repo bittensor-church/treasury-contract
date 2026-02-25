@@ -57,8 +57,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     mapping(uint256 => mapping(bytes32 => uint256)) public periodSpent;
 
     modifier onlyValidator(address account) {
-        uint16 uid = getUidForAddress(account);
-        require(IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid), "Not a validator");
+        require(_isValidator(account), "Not a validator");
         _;
     }
 
@@ -318,25 +317,68 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         periodSpent[currentPeriod][assetId] += amount;
     }
 
+    function _isValidator(address account) internal view returns (bool) {
+        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, account, type(uint16).max);
+
+        for (uint256 i = 0; i < items.length; i++) {
+            if (IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, items[i].uid)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
-        bytes32 hotkey = getHotkeyForAddress(account);
-        return _proposalTallies[proposalId].hotkeySupport[hotkey] != 0;
+        bytes32[] memory hotkeys = getHotkeysForAddress(account);
+
+        if (hotkeys.length == 0) return false;
+
+        for (uint256 i = 0; i < hotkeys.length; i++) {
+            if (_proposalTallies[proposalId].hotkeySupport[hotkeys[i]] != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getUidsForAddress(address evmAddress) public view returns (uint16[] memory) {
+        LookupItem[] memory items =
+            IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, type(uint16).max);
+        require(items.length > 0, "No UID");
+
+        uint16[] memory uids = new uint16[](items.length);
+        for (uint256 i = 0; i < items.length; i++) {
+            uids[i] = items[i].uid;
+        }
+        return uids;
+    }
+
+    function getHotkeysForAddress(address evmAddress) public view returns (bytes32[] memory) {
+        LookupItem[] memory items =
+            IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, type(uint16).max);
+
+        bytes32[] memory hotkeys = new bytes32[](items.length);
+        for (uint256 i = 0; i < items.length; i++) {
+            hotkeys[i] = IMetagraph(METAGRAPH_ADDRESS).getHotkey(TARGET_NETUID, items[i].uid);
+        }
+        return hotkeys;
     }
 
     function getUidForAddress(address evmAddress) public view returns (uint16) {
-        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, 1);
+        LookupItem[] memory items =
+            IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, type(uint16).max);
         require(items.length > 0, "No UID");
         return items[0].uid;
     }
 
-    function getHotkeyForAddress(address evmAddress) public view returns (bytes32) {
-        uint16 uid = getUidForAddress(evmAddress);
-        return IMetagraph(METAGRAPH_ADDRESS).getHotkey(TARGET_NETUID, uid);
-    }
-
     function getVotingPowerForAddress(address evmAddress) public view returns (uint256) {
-        bytes32 hotkey = getHotkeyForAddress(evmAddress);
-        return IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
+        bytes32[] memory hotkeys = getHotkeysForAddress(evmAddress);
+        uint256 totalPower = 0;
+
+        for (uint256 i = 0; i < hotkeys.length; i++) {
+            totalPower += IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkeys[i]);
+        }
+        return totalPower;
     }
 
     function _castVote(uint256 proposalId, address account, uint8 support, string memory reason)
@@ -366,12 +408,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         ProposalTallies storage tally = _proposalTallies[proposalId];
         require(support <= 1, "Invalid vote");
 
-        bytes32 hotkey = getHotkeyForAddress(account);
+        bytes32[] memory hotkeys = getHotkeysForAddress(account);
+        require(hotkeys.length > 0, "No associated hotkeys");
 
-        if (tally.hotkeySupport[hotkey] == 0) {
-            tally.votedHotkeys.push(hotkey);
+        for (uint256 i = 0; i < hotkeys.length; i++) {
+            bytes32 hotkey = hotkeys[i];
+            if (tally.hotkeySupport[hotkey] == 0) {
+                tally.votedHotkeys.push(hotkey);
+                tally.hotkeySupport[hotkey] = support + 1;
+            }
         }
-        tally.hotkeySupport[hotkey] = support + 1;
     }
 
     function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes, uint256 againstVotes) {

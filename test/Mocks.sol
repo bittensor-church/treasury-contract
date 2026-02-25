@@ -16,7 +16,6 @@ interface Vm {
 }
 
 contract MockNeuron {
-    // Obliczamy adres cheat code'u (hevm)
     address constant VM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
     Vm constant vm = Vm(VM_ADDRESS);
 
@@ -30,8 +29,6 @@ contract MockNeuron {
         }
 
         if (burnAmount > 0) {
-            // Symulujemy działanie precompile: zabieramy ETH od wołającego (Vaulta)
-            // msg.sender to TreasuryVault.
             uint256 currentBalance = msg.sender.balance;
             if (currentBalance >= burnAmount) {
                 vm.deal(msg.sender, currentBalance - burnAmount);
@@ -91,8 +88,6 @@ contract MockBittensorVotes is IBittensorVotes {
 
 contract MockTarget {
     uint256 public value;
-    // Receive przyjmuje ETH, ale nie aktualizuje zmiennej `value`.
-    // Testy powinny sprawdzać address(this).balance.
     receive() external payable { }
     fallback() external payable { }
 
@@ -102,16 +97,15 @@ contract MockTarget {
 }
 
 contract MockUidLookup is IUidLookup {
-    mapping(uint16 => mapping(address => LookupItem)) public lookups;
-    bool public exists;
+    mapping(uint16 => mapping(address => LookupItem[])) public lookups;
 
     function setLookup(uint16 netuid, address addr, uint16 uid) external {
-        lookups[netuid][addr] = LookupItem({ uid: uid, block_associated: uint64(block.number) });
-        exists = true;
+        delete lookups[netuid][addr];
+        lookups[netuid][addr].push(LookupItem({ uid: uid, block_associated: uint64(block.number) }));
     }
 
-    function clearLookup() external {
-        exists = false;
+    function addLookup(uint16 netuid, address addr, uint16 uid) external {
+        lookups[netuid][addr].push(LookupItem({ uid: uid, block_associated: uint64(block.number) }));
     }
 
     function uidLookup(uint16 netuid, address evm_address, uint16)
@@ -120,14 +114,7 @@ contract MockUidLookup is IUidLookup {
         override
         returns (LookupItem[] memory)
     {
-        LookupItem[] memory items;
-        if (exists && lookups[netuid][evm_address].block_associated != 0) {
-            items = new LookupItem[](1);
-            items[0] = lookups[netuid][evm_address];
-        } else {
-            items = new LookupItem[](0);
-        }
-        return items;
+        return lookups[netuid][evm_address];
     }
 }
 

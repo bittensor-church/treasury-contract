@@ -202,7 +202,7 @@ contract TreasuryControllerTest is Test {
         uint256 pid = _createNativeProposal(voter1, 42, "Prop");
         _rollToActive();
         vm.prank(noUidVoter);
-        vm.expectRevert("No UID");
+        vm.expectRevert("Not a validator");
         controller.castVote(pid, 1);
     }
 
@@ -626,5 +626,82 @@ contract TreasuryControllerTest is Test {
 
         _rollToEnd();
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_MultiUid_AggregateVotingPower() public {
+        address multiVoter = makeAddr("multiVoter");
+
+        mockUidLookup.setLookup(TARGET_NETUID, multiVoter, 10);
+        mockMetagraph.setHotkey(TARGET_NETUID, 10, bytes32(uint256(10)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 10, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(10)), 200);
+
+        mockUidLookup.addLookup(TARGET_NETUID, multiVoter, 11);
+        mockMetagraph.setHotkey(TARGET_NETUID, 11, bytes32(uint256(11)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 11, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(11)), 200);
+
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(multiVoter, 10, "Aggregated Power");
+        _rollToActive();
+
+        vm.prank(multiVoter);
+        controller.castVote(pid, 1);
+
+        assertTrue(controller.hasVoted(pid, multiVoter));
+        assertEq(controller.getVotingPowerForAddress(multiVoter), 400);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_MultiUid_MixedValidatorStatus_Success() public {
+        address mixedVoter = makeAddr("mixedVoter");
+
+        mockUidLookup.setLookup(TARGET_NETUID, mixedVoter, 20);
+        mockMetagraph.setHotkey(TARGET_NETUID, 20, bytes32(uint256(20)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 20, false);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(20)), 100);
+
+        mockUidLookup.addLookup(TARGET_NETUID, mixedVoter, 21);
+        mockMetagraph.setHotkey(TARGET_NETUID, 21, bytes32(uint256(21)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 21, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(21)), 300);
+
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(mixedVoter, 10, "Mixed Validator Status");
+        _rollToActive();
+
+        vm.prank(mixedVoter);
+        controller.castVote(pid, 1);
+
+        assertTrue(controller.hasVoted(pid, mixedVoter));
+        assertEq(controller.getVotingPowerForAddress(mixedVoter), 400);
+
+        _rollToEnd();
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_MultiUid_BothNonValidator_Revert() public {
+        address nonValidator = makeAddr("nonValidatorMulti");
+
+        mockUidLookup.setLookup(TARGET_NETUID, nonValidator, 30);
+        mockMetagraph.setHotkey(TARGET_NETUID, 30, bytes32(uint256(30)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 30, false);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(30)), 200);
+
+        mockUidLookup.addLookup(TARGET_NETUID, nonValidator, 31);
+        mockMetagraph.setHotkey(TARGET_NETUID, 31, bytes32(uint256(31)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 31, false);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(31)), 200);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Non Validator Multi");
+        _rollToActive();
+
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.castVote(pid, 1);
     }
 }
