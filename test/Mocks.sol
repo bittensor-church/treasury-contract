@@ -20,25 +20,15 @@ contract MockNeuron {
     Vm constant vm = Vm(VM_ADDRESS);
 
     bool public shouldFail;
-    uint256 public burnAmount;
-    uint256 public mintAmount;
+    mapping(uint16 => uint64) public burnCosts;
+
+    function getBurnCost(uint16 netuid) external view returns (uint64) {
+        return burnCosts[netuid];
+    }
 
     function burnedRegister(uint16, bytes32) external payable {
         if (shouldFail) {
             revert("Mock: burnedRegister failed");
-        }
-
-        if (burnAmount > 0) {
-            uint256 currentBalance = msg.sender.balance;
-            if (currentBalance >= burnAmount) {
-                vm.deal(msg.sender, currentBalance - burnAmount);
-            } else {
-                vm.deal(msg.sender, 0);
-            }
-        }
-
-        if (mintAmount > 0) {
-            vm.deal(msg.sender, msg.sender.balance + mintAmount);
         }
     }
 
@@ -46,12 +36,8 @@ contract MockNeuron {
         shouldFail = _fail;
     }
 
-    function setBurnAmount(uint256 _amount) external {
-        burnAmount = _amount;
-    }
-
-    function setMintAmount(uint256 _amount) external {
-        mintAmount = _amount;
+    function setBurnCost(uint16 netuid, uint64 cost) external {
+        burnCosts[netuid] = cost;
     }
 }
 
@@ -136,27 +122,6 @@ contract MockMetagraph is IMetagraph {
 
     function getHotkey(uint16 netuid, uint16 uid) external view override returns (bytes32) {
         return hotkeys[netuid][uid];
-    }
-}
-
-contract MockRegistrationCost {
-    mapping(uint16 => uint256) public burnCosts;
-    mapping(uint16 => bool) public registrationAllowed;
-
-    function setBurn(uint16 netuid, uint256 amount) external {
-        burnCosts[netuid] = amount;
-    }
-
-    function setRegistrationAllowed(uint16 netuid, bool allowed) external {
-        registrationAllowed[netuid] = allowed;
-    }
-
-    function getBurn(uint16 netuid) external view returns (uint256) {
-        return burnCosts[netuid];
-    }
-
-    function isRegistrationAllowed(uint16 netuid) external view returns (bool) {
-        return registrationAllowed[netuid];
     }
 }
 
