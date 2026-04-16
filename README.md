@@ -44,7 +44,7 @@ the Bittensor ecosystem:
 
 ---
 
-## ⚡ End-to-End Usage Workflow
+## End-to-End Usage Workflow
 
 Below is a step-by-step guide to deploying and operating the governance system using the provided helper scripts.
 
@@ -53,7 +53,7 @@ Below is a step-by-step guide to deploying and operating the governance system u
 Set up your environment variables (NetUID, Governor settings) and deploy the contracts to the network.
 
 ```bash
-# Edit .deploy.sh file if you want to change some envs, then run:
+# Edit deploy.sh if you want to change some envs, then run:
 sh deploy.sh
 ```
 
@@ -63,107 +63,184 @@ steps:
 ```bash
 export VAULT=<Vault_Address_From_Logs>
 export GOVERNOR=<Governor_Address_From_Logs>
-export MOCK_VOTES=<MockVotes_Address_From_Logs>
-
+export MOCK_VOTES=<MockVotes_Address_From_Logs>   # only on testnet/localnet
 ```
 
 ### 2. Wallet Setup
 
-Generate necessary coldkeys and hotkeys using the Bittensor CLI to interact with the network.
+Generate necessary coldkeys and hotkeys using the Bittensor CLI.
 
 ```bash
 btcli wallet new-coldkey --wallet.name vaultcoldkey
-
+btcli wallet new-hotkey --wallet.name vaultcoldkey --hotkey.name vaulthotkey
 ```
 
-Then copy this cold key ss58 address, convert it to public key and then use it in neuron registration
+Then copy the coldkey SS58 address and the hotkey SS58 address for the next steps.
 
 ### 3. Neuron Registration
 
-Register your hotkey to a specific NetUID to become a validator/neuron on the network.
+Register the hotkey on a subnet via the TreasuryVault contract. The vault pays the burn cost.
 
 ```bash
-python3 tools/register_neuron.py --netuid 285 --hotkey <HOTKEY_ADDRESS> --rpc-url $RPC_URL --private-key $PRIVATE_KEY $VAULT
-
+python3 tools/register_neuron.py $VAULT \
+    --netuid 285 \
+    --hotkey <HOTKEY_BYTES32_PUBLIC_KEY> \
+    --network test \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-### 4. Set Weights (Subnet Ops)
+**Note:** The `--hotkey` must be a 32-byte hex public key. You can obtain it from the SS58 hotkey
+using `substrateinterface`.
+
+### 4. Associate EVM Address
+
+Link the vault's EVM address to the Bittensor hotkey. This is a **critical step** that enables the
+vault to receive emissions and participate in EVM-based governance.
+
+```bash
+python3 tools/associate_evm.py \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY \
+    --coldkey <SS58_COLDKEY> \
+    --hotkey <SS58_HOTKEY> \
+    --coldkey-seed "$COLDKEY_SEED"
+```
+
+### 5. Set Weights (Subnet Ops)
 
 Set weights on the subnet to establish the neuron's position and influence.
 
 ```bash
-python3 tools/set_weights.py --network test --netuid 285 --weights 1 --uids <YOUR_UID> --wallet-name <WALLET_NAME> --hotkey-name <HOTKEY_NAME>
-
+python3 tools/set_weights.py \
+    --network test \
+    --netuid 285 \
+    --weights 1 \
+    --uids <YOUR_UID> \
+    --wallet-name <WALLET_NAME> \
+    --hotkey-name <HOTKEY_NAME>
 ```
 
-### 5. Assign Voting Power (Testnet/Mock Only)
+### 6. Assign Voting Power (Testnet/Mock Only)
 
 Assign mock voting power (stake) to your wallet to enable voting capabilities during testing.
 
 ```bash
-python3 tools/set_voting_power.py $MOCK_VOTES --hotkey $MY_WALLET_ADDRESS --amount 50000 --netuid 1 --rpc-url $RPC_URL
+python3 tools/set_voting_power.py $MOCK_VOTES \
+    --hotkey $MY_WALLET_ADDRESS \
+    --amount 50000 \
+    --netuid 1 \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 
+python3 tools/set_total_voting_power.py $MOCK_VOTES \
+    --amount 500000 \
+    --netuid 1 \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-```bash
-python3 tools/set_total_voting_power.py $MOCK_VOTES --hotkey $MY_WALLET_ADDRESS --amount 500000 --netuid 1 --rpc-url $RPC_URL
+### 7. Create a Proposal
 
+Submit a new proposal to the Governor. The unified `propose_proposal.py` script supports three
+transfer types via the `--type` flag: `native`, `alpha`, or `erc20`.
+
+**Alpha transfer example:**
+```bash
+export STAKING_PRECOMPILE=0x0000000000000000000000000000000000000805
+python3 tools/propose_proposal.py $GOVERNOR \
+    --type alpha \
+    --hotkey $NEURON_HOT_KEY \
+    --netuid <netuid> \
+    --amount <amount> \
+    --recipient $RECIPIENT_ADDRESS \
+    --staking-contract $STAKING_PRECOMPILE \
+    --description "Transfer v1" \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-### 6. Create a Proposal
-
-Submit a new proposal to the Governor (e.g., to transfer funds or execute a function).
-
+**Native TAO transfer example:**
 ```bash
-export STAKING_PRECOMPILE=0x0000000000000000000000000000000000000805 # address of the precompile
-export NEURON_HOT_KEY= # export neuron hot key you can get this using `btcli subnet show --netuid <netuid> --network <network> --verbose` and getting given neuron hot key and transforming it into bytes32 (public key)
-python3 tools/propose_alfa_transfer.py $GOVERNOR $STAKING_PRECOMPILE --hotkey $NEURON_HOT_KEY --netuid <netuid> --amount <amount> --recipient $RECIPIENT_ADDRESS --description "Transfer v1" --rpc-url $RPC_URL
-
+python3 tools/propose_proposal.py $GOVERNOR \
+    --type native \
+    --amount <amount> \
+    --recipient $RECIPIENT_ADDRESS \
+    --description "Transfer v1" \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
 *Note the `Proposal ID` returned in the logs.*
+
+Alternatively, use `propose_and_vote_proposal.py` (same arguments) to create a proposal and
+automatically cast a For vote in a single transaction.
 
 ### Check Proposal State
 
 Monitor the status of the proposal to know when to queue or execute.
 
 ```bash
-python3 tools/get_proposal_state.py $GOVERNOR --proposal-id $PID --rpc-url $RPC_URL
-
+python3 tools/get_proposal_state.py $GOVERNOR \
+    --proposal-id $PID \
+    --rpc-url $RPC_URL
 ```
 
-### 7. Cast Vote
+### 8. Cast Vote
 
-Cast your vote (Support: 1 = For, 0 = Against) on the active proposal.
+Cast your vote (Support: `0` = Against, `1` = For, `2` = Abstain) on the active proposal.
 
 ```bash
-python3 tools/vote.py $GOVERNOR --proposal-id $PID --support 1 --rpc-url $RPC_URL
-
+python3 tools/vote.py $GOVERNOR \
+    --proposal-id $PID \
+    --support 1 \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-### 8. Queue Proposal
+### 9. Queue Proposal
 
 Once the voting period ends and the proposal succeeds, move it to the Timelock queue.
+**You must pass the exact same parameters** (type, amount, recipient, description, etc.) that were
+used when creating the proposal.
 
 ```bash
-python3 tools/queue_alfa_proposal.py $GOVERNOR $STAKING_PRECOMPILE --hotkey $NEURON_HOT_KEY --netuid <netuid> --amount <amount> --recipient $RECIPIENT_ADDRESS --description "Transfer v1" --rpc-url $RPC_URL
-
+python3 tools/queue_proposal.py $GOVERNOR \
+    --type alpha \
+    --hotkey $NEURON_HOT_KEY \
+    --netuid <netuid> \
+    --amount <amount> \
+    --recipient $RECIPIENT_ADDRESS \
+    --staking-contract $STAKING_PRECOMPILE \
+    --description "Transfer v1" \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-### 9. Execute Proposal
+### 10. Execute Proposal
 
 After the timelock delay passes, execute the transaction to finalize the action on-chain.
 
 ```bash
-python3 tools/execute_alfa_proposal.py $GOVERNOR $STAKING_PRECOMPILE --hotkey $NEURON_HOT_KEY --netuid <netuid> --amount <amount> --recipient $RECIPIENT_ADDRESS --description "Transfer v1" --rpc-url $RPC_URL
-
+python3 tools/execute_proposal.py $GOVERNOR \
+    --type alpha \
+    --hotkey $NEURON_HOT_KEY \
+    --netuid <netuid> \
+    --amount <amount> \
+    --recipient $RECIPIENT_ADDRESS \
+    --staking-contract $STAKING_PRECOMPILE \
+    --description "Transfer v1" \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
 ```
 
-### 10. Verify Balance
+### 11. Verify Balance
 
 Confirm the execution results by checking the validator's stake.
 
 ```bash
+python3 tools/get_balance.py <YOUR_SS58_ADDRESS> --network test
+# or
 btcli stake list --network test --ss58 <YOUR_WALLET_ADDRESS>
 ```
 
@@ -173,8 +250,8 @@ btcli stake list --network test --ss58 <YOUR_WALLET_ADDRESS>
 
 To simplify interaction with these complex contracts, a dedicated Python toolset is provided.
 
-* 📖 **[Python Tooling & Automation Guide](https://www.google.com/search?q=tools/README.md)**: Detailed documentation for
-  proposing, voting, and managing the vault using our automated scripts.
+* **[Python Tooling & Automation Guide](tools/README.md)**: Detailed documentation for all scripts including
+  proposing, voting, and managing the vault.
 
 ---
 

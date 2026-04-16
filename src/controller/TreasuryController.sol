@@ -26,14 +26,21 @@ interface IBittensorVotes {
     function getTotalVotingPower(uint16 netuid) external view returns (uint256);
 }
 
-interface IAlphaToken {
-    function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external;
+interface IStakingV2 {
+    function transferStake(
+        bytes32 destinationColdkey,
+        bytes32 hotkey,
+        uint256 originNetuid,
+        uint256 destinationNetuid,
+        uint256 amountAlpha
+    ) external;
 }
 
 contract TreasuryController is Governor, GovernorSettings, GovernorTimelockControl {
     address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
     address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
+    address constant STAKING_V2_ADDRESS = 0x0000000000000000000000000000000000000805;
 
     uint16 public immutable TARGET_NETUID;
     uint256 public immutable SUPPORT_THRESHOLD_NUMERATOR;
@@ -119,17 +126,26 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
     }
 
-    function _buildAlphaPayload(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount)
-        internal
-        pure
-        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
-    {
+    function _buildAlphaPayload(
+        bytes32 destinationColdkey,
+        bytes32 hotkey,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
+        uint256 amount
+    ) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
         targets = new address[](1);
         values = new uint256[](1);
         calldatas = new bytes[](1);
-        targets[0] = target;
+        targets[0] = STAKING_V2_ADDRESS;
         values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        calldatas[0] = abi.encodeWithSelector(
+            IStakingV2.transferStake.selector,
+            destinationColdkey,
+            hotkey,
+            uint256(originNetuid),
+            uint256(destinationNetuid),
+            amount
+        );
     }
 
     function propose(address[] memory, uint256[] memory, bytes[] memory, string memory)
@@ -202,28 +218,28 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function proposeAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
     function proposeAndVoteAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
@@ -254,15 +270,15 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function queueAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -298,16 +314,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function executeAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external payable returns (uint256) {
-        _updateLimit(keccak256(abi.encode(target, netuid)), amount, ALPHA_LIMIT);
+        _updateLimit(keccak256(abi.encode("alpha", originNetuid)), amount, ALPHA_LIMIT);
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -355,6 +371,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function getHotkeysForAddress(address evmAddress) public view returns (bytes32[] memory) {
         LookupItem[] memory items =
+
             IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, type(uint16).max);
 
         bytes32[] memory hotkeys = new bytes32[](items.length);

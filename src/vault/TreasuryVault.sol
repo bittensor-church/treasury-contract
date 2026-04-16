@@ -6,14 +6,13 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 address constant NEURON_PRECOMPILE = 0x0000000000000000000000000000000000000804;
 
 interface INeuron {
-    function getBurnCost(uint16 netuid) external view returns (uint64);
-    function burnedRegister(uint16 netuid, bytes32 hotkey) external payable;
+    function registerLimit(uint16 netuid, bytes32 hotkey, uint64 limitPrice) external payable;
 }
 
 contract TreasuryVault is TimelockController {
     error NeuronRegistrationFailed();
     error RefundError();
-    error InsufficientTaoForRegistration(uint256 required, uint256 provided);
+    error LimitPriceOverflow();
 
     event NeuronRegistration(uint16 indexed netuid, bytes32 hotkey, address indexed caller);
 
@@ -21,23 +20,22 @@ contract TreasuryVault is TimelockController {
         TimelockController(minDelay, proposers, executors, admin)
     { }
 
-    function getRegistrationCost(uint16 netuid) public view returns (uint256) {
-        return uint256(INeuron(NEURON_PRECOMPILE).getBurnCost(netuid));
-    }
-
     function registerNeuron(uint16 netuid, bytes32 hotkey) external payable returns (bool) {
-        uint256 burnCost = getRegistrationCost(netuid);
-
-        if (msg.value < burnCost) {
-            revert InsufficientTaoForRegistration(burnCost, msg.value);
+        uint256 limitRao = msg.value / 1e9;
+        if (limitRao > type(uint64).max) {
+            revert LimitPriceOverflow();
         }
+        uint64 limitPrice = uint64(limitRao);
 
-        try INeuron(NEURON_PRECOMPILE).burnedRegister{ value: burnCost }(netuid, hotkey) { }
+        uint256 balanceBefore = address(this).balance;
+
+        try INeuron(NEURON_PRECOMPILE).registerLimit{ value: msg.value }(netuid, hotkey, limitPrice) { }
         catch {
             revert NeuronRegistrationFailed();
         }
 
-        uint256 refundAmount = msg.value - burnCost;
+        uint256 consumed = balanceBefore - address(this).balance;
+        uint256 refundAmount = msg.value - consumed;
 
         if (refundAmount > 0) {
             _processRefund(msg.sender, refundAmount);

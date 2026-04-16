@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import { TreasuryController, IAlphaToken } from "../src/controller/TreasuryController.sol";
+import { TreasuryController, IStakingV2 } from "../src/controller/TreasuryController.sol";
 import { IGovernor } from "@openzeppelin/contracts/governance/IGovernor.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {
@@ -11,7 +11,7 @@ import {
     MockUidLookup,
     MockMetagraph,
     MockERC20,
-    MockAlphaToken,
+    MockStakingV2,
     RevertingReceiver
 } from "./Mocks.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -24,7 +24,7 @@ contract TreasuryControllerTest is Test {
     MockUidLookup public mockUidLookup;
     MockMetagraph public mockMetagraph;
     MockERC20 public mockToken;
-    MockAlphaToken public mockAlpha;
+    MockStakingV2 public mockStaking;
 
     address public admin = makeAddr("admin");
     address public voter1 = makeAddr("voter1");
@@ -42,23 +42,26 @@ contract TreasuryControllerTest is Test {
     address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
     address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
+    address constant STAKING_V2_ADDRESS = 0x0000000000000000000000000000000000000805;
 
     function setUp() public {
         MockBittensorVotes votesImpl = new MockBittensorVotes();
         MockUidLookup uidImpl = new MockUidLookup();
         MockMetagraph metagraphImpl = new MockMetagraph();
+        MockStakingV2 stakingImpl = new MockStakingV2();
 
         vm.etch(BITTENSOR_VOTES_ADDRESS, address(votesImpl).code);
         vm.etch(UID_LOOKUP_ADDRESS, address(uidImpl).code);
         vm.etch(METAGRAPH_ADDRESS, address(metagraphImpl).code);
+        vm.etch(STAKING_V2_ADDRESS, address(stakingImpl).code);
 
         mockVotes = MockBittensorVotes(BITTENSOR_VOTES_ADDRESS);
         mockUidLookup = MockUidLookup(UID_LOOKUP_ADDRESS);
         mockMetagraph = MockMetagraph(METAGRAPH_ADDRESS);
+        mockStaking = MockStakingV2(STAKING_V2_ADDRESS);
 
         target = new MockTarget();
         mockToken = new MockERC20();
-        mockAlpha = new MockAlphaToken();
 
         address[] memory proposers = new address[](0);
         address[] memory executors = new address[](0);
@@ -153,7 +156,7 @@ contract TreasuryControllerTest is Test {
     function test_Propose_Alpha() public {
         vm.prank(voter1);
         uint256 pid = controller.proposeAlphaTransfer(
-            address(mockAlpha), 1, bytes32("hotkey"), address(target), 100 ether, "Alpha Prop"
+            bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Alpha Prop"
         );
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
     }
@@ -264,17 +267,18 @@ contract TreasuryControllerTest is Test {
     function test_Execute_Alpha_Success() public {
         uint256 amount = 300 ether;
         string memory desc = "Alpha Execute";
+        bytes32 dst = bytes32("dstColdkey");
+        bytes32 hk = bytes32("hk");
         vm.prank(voter1);
-        uint256 pid =
-            controller.proposeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
+        uint256 pid = controller.proposeAlphaTransfer(dst, hk, 5, 5, amount, desc);
         _passProposal(pid);
 
-        controller.queueAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
+        controller.queueAlphaTransfer(dst, hk, 5, 5, amount, desc);
         vm.warp(block.timestamp + 1 days + 1);
 
         vm.expectEmit(true, true, true, true);
-        emit MockAlphaToken.AlphaTransferred(5, bytes32("hk"), address(target), amount);
-        controller.executeAlphaTransfer(address(mockAlpha), 5, bytes32("hk"), address(target), amount, desc);
+        emit MockStakingV2.StakeTransferred(dst, hk, 5, 5, amount);
+        controller.executeAlphaTransfer(dst, hk, 5, 5, amount, desc);
     }
 
     function test_Revert_GenericExecute() public {
@@ -556,15 +560,16 @@ contract TreasuryControllerTest is Test {
     function test_ProposeAndVote_Alpha_Lifecycle() public {
         uint256 amount = 100 ether;
         string memory desc = "P&V Alpha";
+        bytes32 dst = bytes32("dstColdkey");
+        bytes32 hk = bytes32("hk");
 
         vm.prank(voter1);
-        uint256 pid =
-            controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
+        uint256 pid = controller.proposeAndVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
 
         _rollToActive();
 
         vm.prank(voter1);
-        controller.proposeAndVoteAlphaTransfer(address(mockAlpha), 1, bytes32("hk"), address(target), amount, desc);
+        controller.proposeAndVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
 
         assertTrue(controller.hasVoted(pid, voter1));
     }
