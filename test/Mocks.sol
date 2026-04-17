@@ -32,14 +32,13 @@ contract MockNeuron {
         if (burn > limitInWei) {
             revert("Mock: burn exceeds limit");
         }
-        if (burn > msg.value) {
-            revert("Mock: burn exceeds value");
-        }
 
-        uint256 refund = msg.value - burn;
-        if (refund > 0) {
-            (bool success,) = payable(msg.sender).call{ value: refund }("");
-            require(success, "Mock: refund failed");
+        if (burn > 0) {
+            if (msg.sender.balance < burn) {
+                revert("Mock: burn exceeds caller balance");
+            }
+            vm.deal(msg.sender, msg.sender.balance - burn);
+            vm.deal(address(this), address(this).balance + burn);
         }
     }
 

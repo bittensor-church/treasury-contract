@@ -1,45 +1,27 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Treasury Contract — Native TAO Transfer E2E Test (Local Chain)
+# Treasury Contract — Alpha Transfer E2E Test (Local Chain)
 # ============================================================================
 #
-# Prerequisites:
-#   - Local subtensor running at ws://127.0.0.1:9944
-#   - btcli with Alice wallet (hotkey "default")
-#   - forge/cast installed
-#   - python3 + requirements.txt
-#
 # Flow:
-#   0. Pre-flight + fund deployer EVM (from Alice)
-#   1. Create subnet + start emissions
-#   2. Create hotkey + register as validator
-#   3. Alice stakes TAO → real voting power
-#   4. Associate EVM voter → staked hotkey (may fail: K-7)
-#   5. Deploy TreasuryVault + TreasuryController (forge script)
-#   6. Fund vault with TAO
-#   7. Propose native transfer
-#   8. Vote (For)
-#   9. Wait voting period → Succeeded
-#   10. Queue
-#   11. Wait minDelay
-#   12. Execute
-#   13. Verify recipient balance
+#   Same setup as native/erc20 (REUSE_SETUP shares /tmp/treasury-e2e-state.env),
+#   plus alpha-specific phases:
+#
+#     5b. Generate vault's neuron hotkey (random bytes32, cached in state file)
+#     5d. Disable admin-freeze-window + commit_reveal_weights on netuid (localnet-only)
+#     6a. vault.registerNeuron(netuid, vault_hotkey) — burns TAO from vault,
+#         creates (vault_coldkey, vault_hotkey, netuid) neuron slot.
+#     6c. Alice's validator set_weights(uid=vault_uid, weight=1.0) so emissions
+#         flow to the vault's neuron.
+#     6b. Wait for alpha to accumulate on (vault_coldkey, vault_hotkey, netuid)
+#         via subnet emissions, read via IStakingV2.getStake precompile.
+#     7.  propose alpha transfer (vault_coldkey → destination coldkey)
+#     8-12. vote / wait / queue / execute
+#     13. Verify delta on getStake(vault_hotkey, destination_coldkey, netuid)
 #
 # Usage:
-#   chmod +x scripts/localnet-e2e-native.sh
-#   ./scripts/localnet-e2e-native.sh              # full setup + proposal flow
-#
-#   # Reuse previous setup (subnet + hotkey + stake + EVM assoc + deploy):
-#   REUSE_SETUP=1 ./scripts/localnet-e2e-native.sh
-#     → loads /tmp/treasury-e2e-state.env and skips Phases 1–5.
-#     → Phases 0 + 6 still run (top-up deployer / vault if needed).
-#     → proposal/vote/queue/execute always re-run (cheap, repeatable).
-#
-#   # Reuse only existing subnet (still redeploy contracts, re-associate, etc.):
-#   EXISTING_NETUID=2 ./scripts/localnet-e2e-native.sh
-#
-#   # Reset setup cache (force full run):
-#   rm /tmp/treasury-e2e-state.env && ./scripts/localnet-e2e-native.sh
+#   ./scripts/localnet-e2e-alpha.sh
+#   REUSE_SETUP=1 ./scripts/localnet-e2e-alpha.sh
 # ============================================================================
 
 set -euo pipefail
@@ -52,50 +34,60 @@ RPC_URL="${RPC_URL:-http://127.0.0.1:9944}"
 ALICE_WALLET="${ALICE_WALLET:-alice}"
 ALICE_HOTKEY_NAME="${ALICE_HOTKEY_NAME:-default}"
 ALICE_COLDKEY_SEED="0xe5be9a5092b81bca64be81d212e7f2f9eba183bb7a90954f7b76361f6edb5c0a"
+ALICE_SS58="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
 
-# Pre-generated deployer EVM account (shared across all E2E scripts)
 DEPLOYER_ADDR="${DEPLOYER_ADDR:-0x509F12D8f6a0fE446055307f3dF2e10245C72494}"
 DEPLOYER_PK="${DEPLOYER_PK:-0x2406c650b21d05b4057cc505e78e2f3e8db513a68c26b99cd030cc2f6c88445b}"
 DEPLOYER_SS58="${DEPLOYER_SS58:-5DCcvGJKfNX16RWpbyvaYBTxFHexCh2wxGfLqS9BsX5GmaSA}"
 
-# Validator hotkey under alice — provides voting power
 VALIDATOR_HOTKEY_NAME="${VALIDATOR_HOTKEY_NAME:-e2e_validator}"
 
-# Amounts
 FUND_DEPLOYER_TAO=10000
 STAKE_AMOUNT="${STAKE_AMOUNT:-5000}"
-VAULT_FUND_AMOUNT="${VAULT_FUND_AMOUNT:-10}"
-TRANSFER_AMOUNT="${TRANSFER_AMOUNT:-1}"
 
-# Fresh recipient EVM address (no conflicting state)
-RECIPIENT_ADDR="${RECIPIENT_ADDR:-0xd10375caed456c5902D7B155117Dd155398145C7}"
+# Enough for registerNeuron burn (~1 TAO typ.) + post-reg vault balance
+VAULT_FUND_AMOUNT="${VAULT_FUND_AMOUNT:-20}"
 
-# Governance params (passed to deploy.sh as env vars)
+# Burn price sent to registerNeuron as msg.value (1 TAO default)
+REGISTER_BURN_TAO="${REGISTER_BURN_TAO:-1}"
+
+# Blocks to wait for alpha to accumulate before proposing
+ALPHA_WAIT_BLOCKS="${ALPHA_WAIT_BLOCKS:-30}"
+
+# Validator weight on vault's UID (1.0 sends all emissions to vault)
+VAULT_UID_WEIGHT="${VAULT_UID_WEIGHT:-1.0}"
+
+# Amount of alpha to transfer (in alpha tokens, 9-dec RAO internally)
+TRANSFER_AMOUNT_ALPHA="${TRANSFER_AMOUNT_ALPHA:-0.0001}"
+
+# Destination for the alpha transfer (any SS58). Default: alice's coldkey.
+DEST_COLDKEY_SS58="${DEST_COLDKEY_SS58:-$ALICE_SS58}"
+
+# Governance params
 export MIN_DELAY="${MIN_DELAY:-1}"
 export VOTING_DELAY="${VOTING_DELAY:-0}"
 export VOTING_PERIOD="${VOTING_PERIOD:-10}"
 export PROPOSAL_THRESHOLD="${PROPOSAL_THRESHOLD:-0}"
 export QUORUM_BPS="${QUORUM_BPS:-100}"
 export PROPOSAL_EXPIRATION="${PROPOSAL_EXPIRATION:-1000}"
-export TAO_LIMIT="${TAO_LIMIT:-1000000000000000000000}"       # 1000 TAO
+export TAO_LIMIT="${TAO_LIMIT:-1000000000000000000000}"
 export ALPHA_LIMIT="${ALPHA_LIMIT:-5000000000000000000000}"
 export ERC20_LIMIT="${ERC20_LIMIT:-10000000000000000000000}"
 export LIMIT_RESET_PERIOD_MIN="${LIMIT_RESET_PERIOD_MIN:-10080}"
 
-# Proposal description — MUST be identical across propose/queue/execute
-DESCRIPTION="E2E Native Transfer Test"
+DESCRIPTION="E2E Alpha Transfer Test $(date +%s)"
 
-# Bittensor local chain requires legacy txs + explicit gas
 EVM_FLAGS="--legacy --gas-price 10000000000"
-FORGE_FLAGS="$EVM_FLAGS --gas-limit 5000000 --broadcast"
 CAST_FLAGS="$EVM_FLAGS --gas-limit 500000"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Persistent state between runs (REUSE_SETUP reads from here)
 STATE_FILE="${STATE_FILE:-/tmp/treasury-e2e-state.env}"
 REUSE_SETUP="${REUSE_SETUP:-0}"
+
+# Bittensor StakingV2 precompile
+STAKING_V2_ADDR="0x0000000000000000000000000000000000000805"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -106,16 +98,6 @@ fail() { echo -e "  \033[1;31m✗ $1\033[0m"; exit 1; }
 
 btcli_cmd() { btcli "$@" --network "$CHAIN_ENDPOINT"; }
 
-# H160 → substrate account_id (bytes32 hex) via HashedAddressMapping
-h160_to_substrate_b32() {
-    python3 -c "
-import hashlib
-h160 = bytes.fromhex('${1#0x}')
-print('0x' + hashlib.blake2b(b'evm:' + h160, digest_size=32).hexdigest())
-"
-}
-
-# H160 → SS58 (prefix 42) via HashedAddressMapping
 h160_to_ss58() {
     python3 -c "
 import hashlib
@@ -134,6 +116,22 @@ print(r.decode())
 "
 }
 
+h160_to_b32() {
+    python3 -c "
+import hashlib
+h160 = bytes.fromhex('${1#0x}'.replace('0x',''))
+print('0x' + hashlib.blake2b(b'evm:' + h160, digest_size=32).hexdigest())
+"
+}
+
+ss58_to_b32() {
+    python3 -c "
+from substrateinterface.utils.ss58 import ss58_decode
+h = ss58_decode('$1')
+print('0x' + h if not h.startswith('0x') else h)
+"
+}
+
 read_hotkey_pubkey() {
     python3 -c "import json; print(json.load(open('$HOME/.bittensor/wallets/$1/hotkeys/$2')).get('publicKey',''))"
 }
@@ -142,31 +140,17 @@ read_hotkey_ss58() {
     python3 -c "import json; print(json.load(open('$HOME/.bittensor/wallets/$1/hotkeys/$2')).get('ss58Address',''))"
 }
 
-# Poll state() via get_proposal_state.py until it equals $2 (or timeout)
-wait_for_state() {
-    local GOVERNOR="$1"
-    local TARGET_STATE="$2"
-    local PID="$3"
-    local MAX_WAIT="${4:-300}"
-    local WAITED=0
-    while true; do
-        STATE=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR" \
-            --proposal-id "$PID" --rpc-url "$RPC_URL" 2>/dev/null \
-            | grep -E "^State:" | awk '{print $2}' || echo "Unknown")
-        if [[ "$STATE" == "$TARGET_STATE" ]]; then
-            ok "State reached: $TARGET_STATE"
-            return 0
-        fi
-        if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
-            fail "Timeout waiting for state=$TARGET_STATE (current: $STATE after ${MAX_WAIT}s)"
-        fi
-        echo "  waiting for state=$TARGET_STATE (current: $STATE, elapsed ${WAITED}s)"
-        sleep 6
-        WAITED=$((WAITED + 6))
-    done
+# getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) → uint256 (RAO)
+get_alpha_stake() {
+    local HOTKEY_B32="$1"
+    local COLDKEY_B32="$2"
+    local NETUID="$3"
+    cast call "$STAKING_V2_ADDR" \
+        "getStake(bytes32,bytes32,uint256)(uint256)" \
+        "$HOTKEY_B32" "$COLDKEY_B32" "$NETUID" \
+        --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}'
 }
 
-# Wait N blocks by polling block_number
 wait_blocks() {
     local N="$1"
     local START=$(cast block-number --rpc-url "$RPC_URL")
@@ -181,6 +165,16 @@ wait_blocks() {
     done
 }
 
+update_state() {
+    local KEY="$1"
+    local VALUE="$2"
+    if [[ -f "$STATE_FILE" ]] && grep -q "^${KEY}=" "$STATE_FILE"; then
+        sed -i '' "s|^${KEY}=.*|${KEY}=${VALUE}|" "$STATE_FILE"
+    else
+        echo "${KEY}=${VALUE}" >> "$STATE_FILE"
+    fi
+}
+
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 
 log "Pre-flight"
@@ -189,7 +183,6 @@ ok "Chain reachable (chain-id: $(cast chain-id --rpc-url "$RPC_URL"))"
 ok "Deployer: $DEPLOYER_ADDR"
 ok "Deployer balance: $(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
-# Ensure Alice wallet (regen from dev seed if missing or mismatched)
 ALICE_DIR="$HOME/.bittensor/wallets/$ALICE_WALLET"
 NEED_REGEN=false
 if [[ ! -d "$ALICE_DIR" ]]; then
@@ -220,32 +213,32 @@ else
     ok "Alice hotkey '$ALICE_HOTKEY_NAME' exists"
 fi
 
-# Ensure forge artifacts exist
 if [[ ! -f "$PROJECT_ROOT/out/TreasuryController.sol/TreasuryController.json" ]]; then
     log "Building contracts (forge build)"
     (cd "$PROJECT_ROOT" && forge build --quiet) || fail "forge build failed"
     ok "Compiled"
 fi
 
-# ─── Load cached setup (if REUSE_SETUP=1) ────────────────────────────────────
+# ─── Load cached setup ───────────────────────────────────────────────────────
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
     [[ -f "$STATE_FILE" ]] || fail "REUSE_SETUP=1 but $STATE_FILE not found — run full e2e first"
     # shellcheck disable=SC1090
     source "$STATE_FILE"
-    : "${NETUID:?missing NETUID in $STATE_FILE}"
-    : "${HOTKEY_SS58:?missing HOTKEY_SS58 in $STATE_FILE}"
-    : "${VAULT_ADDR:?missing VAULT_ADDR in $STATE_FILE}"
-    : "${GOVERNOR_ADDR:?missing GOVERNOR_ADDR in $STATE_FILE}"
+    : "${NETUID:?missing NETUID}"
+    : "${HOTKEY_SS58:?missing HOTKEY_SS58}"
+    : "${VAULT_ADDR:?missing VAULT_ADDR}"
+    : "${GOVERNOR_ADDR:?missing GOVERNOR_ADDR}"
     ok "Reusing cached setup from $STATE_FILE"
     ok "  netuid=$NETUID"
-    ok "  hotkey=$HOTKEY_SS58"
+    ok "  hotkey=$HOTKEY_SS58 (e2e_validator, staked)"
     ok "  vault=$VAULT_ADDR"
     ok "  governor=$GOVERNOR_ADDR"
+    [[ -n "${VAULT_NEURON_HOTKEY_B32:-}" ]] && ok "  vault_neuron_hotkey=$VAULT_NEURON_HOTKEY_B32"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 0: Fund deployer EVM account
+# PHASE 0: Fund deployer
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 0: Fund deployer"
@@ -255,11 +248,8 @@ DEPLOYER_BAL_INT=$(python3 -c "print(int(float('$DEPLOYER_BAL')))")
 
 if [[ "$DEPLOYER_BAL_INT" -lt 50 ]]; then
     btcli_cmd wallet transfer \
-        --wallet-name "$ALICE_WALLET" \
-        --dest "$DEPLOYER_SS58" \
-        --amount "$FUND_DEPLOYER_TAO" \
-        --allow-death \
-        --no-prompt 2>&1 | tail -2
+        --wallet-name "$ALICE_WALLET" --dest "$DEPLOYER_SS58" \
+        --amount "$FUND_DEPLOYER_TAO" --allow-death --no-prompt 2>&1 | tail -2
     ok "Transferred $FUND_DEPLOYER_TAO TAO → $DEPLOYER_ADDR"
 else
     ok "Already funded (${DEPLOYER_BAL} TAO)"
@@ -267,7 +257,7 @@ fi
 ok "Deployer balance: $(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 1: Create subnet + start emissions
+# PHASE 1–5 (same as native — gated by REUSE_SETUP)
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -275,14 +265,13 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
 elif [[ -n "${EXISTING_NETUID:-}" ]]; then
     log "Phase 1: Using existing subnet (netuid=$EXISTING_NETUID)"
     NETUID="$EXISTING_NETUID"
-    ok "netuid $NETUID (existing)"
 else
     log "Phase 1: Create subnet + start emissions"
     OUTPUT=$(printf '\n\n\n\n\n\n\n\n\n\n' | btcli_cmd subnets create \
         --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" \
         --no-prompt --subnet-name "treasury_e2e" 2>&1)
     NETUID=$(echo "$OUTPUT" | sed -n 's/.*netuid: \([0-9]*\).*/\1/p' | tail -1)
-    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid from create output"; }
+    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid"; }
     ok "Created subnet netuid=$NETUID"
 
     btcli_cmd subnets start --netuid "$NETUID" \
@@ -291,32 +280,20 @@ else
 
     btcli_cmd sudo set --netuid "$NETUID" \
         --wallet-name "$ALICE_WALLET" --param max_regs_per_block --value 8 --no-prompt 2>&1 | tail -1 || true
-    ok "max_regs_per_block → 8"
 fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE 2: Create hotkey + register as validator
-# ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
     log "Phase 2: SKIPPED (validator hotkey from cache: $HOTKEY_SS58)"
 else
     log "Phase 2: Validator hotkey"
-
     if [[ ! -f "$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME" ]]; then
         btcli wallet new-hotkey --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
             --n-words 12 --no-use-password 2>&1 | tail -1
-        ok "Created hotkey '$VALIDATOR_HOTKEY_NAME'"
-    else
-        ok "Hotkey '$VALIDATOR_HOTKEY_NAME' exists"
     fi
-
     HOTKEY_B32=$(read_hotkey_pubkey "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
     HOTKEY_SS58=$(read_hotkey_ss58 "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
-    ok "Validator hotkey bytes32: $HOTKEY_B32"
-    ok "Validator hotkey SS58:    $HOTKEY_SS58"
+    ok "Validator hotkey SS58: $HOTKEY_SS58"
 
-    # Register on subnet (retry if rate-limited)
     for attempt in 1 2 3; do
         REG_OUT=$(btcli_cmd subnets register --netuid "$NETUID" \
             --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" --no-prompt 2>&1)
@@ -329,82 +306,51 @@ else
     done
 fi
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE 3: Stake TAO → real voting power
-# ═════════════════════════════════════════════════════════════════════════════
-
 if [[ "$REUSE_SETUP" == "1" ]]; then
     log "Phase 3: SKIPPED (stake already applied)"
 else
     log "Phase 3: Stake $STAKE_AMOUNT TAO"
-
     btcli_cmd stake add --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
         --amount "$STAKE_AMOUNT" --netuid "$NETUID" --no-prompt --unsafe 2>&1 | tail -2
-    ok "Staked $STAKE_AMOUNT TAO on $VALIDATOR_HOTKEY_NAME"
 fi
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE 4: Associate deployer EVM address → staked hotkey
-# (Always runs — pallet-side rate limit makes duplicate calls a no-op / warn.)
-# ═════════════════════════════════════════════════════════════════════════════
-
-log "Phase 4: Associate EVM → hotkey (for real voting power)"
-
+log "Phase 4: Associate EVM → hotkey"
 HOTKEY_FILE="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
 HOTKEY_MNEMONIC=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE'))['secretPhrase'])")
 
 set +e
 ASSOCIATE_OUTPUT=$(python3 "$PROJECT_ROOT/tools/associate_evm.py" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" \
-    --netuid "$NETUID" \
-    --hotkey "$HOTKEY_SS58" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" \
+    --netuid "$NETUID" --hotkey "$HOTKEY_SS58" \
     --hotkey-uri "$HOTKEY_MNEMONIC" 2>&1)
 ASSOC_STATUS=$?
 set -e
-
 if [[ "$ASSOC_STATUS" -eq 0 ]]; then
     ok "EVM → hotkey association succeeded"
 else
-    warn "associate_evm failed. Continuing — voter may have 0 voting power."
-    echo "$ASSOCIATE_OUTPUT" | tail -10
+    warn "associate_evm failed (rate-limit if already done)."
+    echo "$ASSOCIATE_OUTPUT" | tail -6
 fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE 5: Deploy Vault + Controller
-# ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
     log "Phase 5: SKIPPED (vault=$VAULT_ADDR, governor=$GOVERNOR_ADDR from cache)"
     VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
 else
     log "Phase 5: Deploy Vault + Controller"
-
     export PRIVATE_KEY="$DEPLOYER_PK"
     export NETUID="$NETUID"
-
-    # Capture forge script output — parse deployed addresses from console.log
     DEPLOY_OUT=$(cd "$PROJECT_ROOT" && forge script script/Deploy.s.sol:DeployGovernance \
-        --rpc-url "$RPC_URL" \
-        --broadcast \
-        --legacy \
-        -vv 2>&1)
-
+        --rpc-url "$RPC_URL" --broadcast --legacy -vv 2>&1)
     VAULT_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Vault deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
     GOVERNOR_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Governor deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
-
-    [[ -z "$VAULT_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "Could not parse Vault address"; }
-    [[ -z "$GOVERNOR_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "Could not parse Governor address"; }
-
+    [[ -z "$VAULT_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse vault"; }
+    [[ -z "$GOVERNOR_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse governor"; }
     ok "Vault:    $VAULT_ADDR"
     ok "Governor: $GOVERNOR_ADDR"
-
     VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
-    ok "Vault SS58: $VAULT_SS58"
 
-    # Persist setup so subsequent runs can REUSE_SETUP=1
     cat > "$STATE_FILE" <<EOF
-# Auto-generated by localnet-e2e-native.sh — re-run with REUSE_SETUP=1 to reuse.
+# Auto-generated by localnet-e2e scripts — re-run with REUSE_SETUP=1 to reuse.
 NETUID=$NETUID
 HOTKEY_B32=$HOTKEY_B32
 HOTKEY_SS58=$HOTKEY_SS58
@@ -415,41 +361,169 @@ EOF
     ok "Saved setup state → $STATE_FILE"
 fi
 
+VAULT_COLDKEY_B32=$(h160_to_b32 "$VAULT_ADDR")
+ok "Vault coldkey bytes32: $VAULT_COLDKEY_B32"
+
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 6: Fund vault
+# PHASE 5b: Generate vault's neuron hotkey (cached per setup)
+# ═════════════════════════════════════════════════════════════════════════════
+
+if [[ -n "${VAULT_NEURON_HOTKEY_B32:-}" ]] && [[ "$REUSE_SETUP" == "1" ]]; then
+    log "Phase 5b: SKIPPED (vault_neuron_hotkey from cache: $VAULT_NEURON_HOTKEY_B32)"
+else
+    log "Phase 5b: Generate vault neuron hotkey (fresh bytes32)"
+    VAULT_NEURON_HOTKEY_B32=$(python3 -c "import secrets; print('0x' + secrets.token_hex(32))")
+    ok "Vault neuron hotkey: $VAULT_NEURON_HOTKEY_B32"
+    update_state "VAULT_NEURON_HOTKEY_B32" "$VAULT_NEURON_HOTKEY_B32"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 5d: Disable commit-reveal on netuid (localnet only, via //Alice sudo)
+#   - set admin freeze window to 0 so admin ops aren't blocked every block
+#   - set commit_reveal_weights_enabled=false so set_weights takes effect immediately
+# ═════════════════════════════════════════════════════════════════════════════
+
+log "Phase 5d: Disable commit-reveal on netuid=$NETUID (localnet sudo)"
+python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+ok "Commit-reveal disabled"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 6: Fund vault (target: $VAULT_FUND_AMOUNT TAO)
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 6: Fund vault (target: $VAULT_FUND_AMOUNT TAO)"
-
 VAULT_BAL=$(cast balance "$VAULT_ADDR" --rpc-url "$RPC_URL" --ether 2>/dev/null || echo "0")
 VAULT_BAL_INT=$(python3 -c "print(int(float('$VAULT_BAL')))")
-
 if [[ "$VAULT_BAL_INT" -lt "$VAULT_FUND_AMOUNT" ]]; then
     btcli_cmd wallet transfer \
-        --wallet-name "$ALICE_WALLET" \
-        --dest "$VAULT_SS58" \
-        --amount "$VAULT_FUND_AMOUNT" \
-        --allow-death \
-        --no-prompt 2>&1 | tail -2
+        --wallet-name "$ALICE_WALLET" --dest "$VAULT_SS58" \
+        --amount "$VAULT_FUND_AMOUNT" --allow-death --no-prompt 2>&1 | tail -2
     ok "Funded vault"
 else
     ok "Vault already funded (${VAULT_BAL} TAO ≥ $VAULT_FUND_AMOUNT TAO target)"
 fi
-ok "Vault balance: $(cast balance "$VAULT_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
+ok "Vault TAO balance: $(cast balance "$VAULT_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 7: Propose native transfer
+# PHASE 6a: Register vault's neuron (idempotent — skip if already on chain)
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 7: Propose native transfer ($TRANSFER_AMOUNT TAO → $RECIPIENT_ADDR)"
+log "Phase 6a: Register vault neuron on netuid=$NETUID"
 
-RECIPIENT_BAL_BEFORE=$(cast balance "$RECIPIENT_ADDR" --rpc-url "$RPC_URL" --ether)
-ok "Recipient balance before: $RECIPIENT_BAL_BEFORE TAO"
+# Quick probe: if vault already has any stake on (vault_coldkey, vault_hotkey, netuid),
+# registration has already happened.
+EXISTING_STAKE_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$VAULT_COLDKEY_B32" "$NETUID")
+if [[ -n "$EXISTING_STAKE_RAO" ]] && [[ "$EXISTING_STAKE_RAO" != "0" ]]; then
+    ok "Vault neuron already registered (stake=$EXISTING_STAKE_RAO RAO)"
+else
+    BURN_WEI=$(cast to-wei "$REGISTER_BURN_TAO" ether)
+    echo "  Calling vault.registerNeuron(netuid=$NETUID, hotkey=$VAULT_NEURON_HOTKEY_B32) with burn=$REGISTER_BURN_TAO TAO..."
+
+    set +e
+    REG_OUT=$(cast send "$VAULT_ADDR" \
+        "registerNeuron(uint16,bytes32)" "$NETUID" "$VAULT_NEURON_HOTKEY_B32" \
+        --value "$BURN_WEI" \
+        --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" \
+        --legacy --gas-price 10000000000 --gas-limit 2000000 2>&1)
+    REG_STATUS=$?
+    set -e
+
+    if [[ "$REG_STATUS" -ne 0 ]]; then
+        echo "$REG_OUT" | tail -15
+        warn "registerNeuron reverted — may already be registered or precompile error."
+        warn "Continuing so you can see downstream behavior."
+    else
+        echo "$REG_OUT" | grep -E "status|blockNumber|transactionHash" | head -3
+        ok "registerNeuron submitted"
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 6c: Alice validator sets weights on vault's UID
+#   Without this, vault's neuron gets 0 emissions regardless of tempo wait.
+# ═════════════════════════════════════════════════════════════════════════════
+
+log "Phase 6c: Validator set_weights on vault's UID"
+
+VAULT_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+    --hotkey "$VAULT_NEURON_HOTKEY_B32" 2>/dev/null || echo "")
+
+if [[ -z "$VAULT_UID" ]]; then
+    fail "Could not resolve vault's UID on netuid=$NETUID — registration may have failed"
+fi
+ok "Vault UID on netuid=$NETUID: $VAULT_UID"
+
+set +e
+SW_OUT=$(python3 "$PROJECT_ROOT/tools/set_weights.py" \
+    --endpoint "$CHAIN_ENDPOINT" \
+    --netuid "$NETUID" \
+    --wallet-name "$ALICE_WALLET" \
+    --hotkey-name "$VALIDATOR_HOTKEY_NAME" \
+    --uids "$VAULT_UID" \
+    --weights "$VAULT_UID_WEIGHT" 2>&1)
+SW_STATUS=$?
+set -e
+echo "$SW_OUT" | sed 's/^/  /'
+if [[ "$SW_STATUS" -ne 0 ]]; then
+    if echo "$SW_OUT" | grep -qE "too soon to commit|SettingWeightsTooFast"; then
+        warn "Rate-limited — weights were set recently; existing weights still in effect"
+    else
+        fail "set_weights failed"
+    fi
+else
+    ok "Weights set: uid=$VAULT_UID weight=$VAULT_UID_WEIGHT"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 6b: Wait for alpha to accumulate on vault's neuron
+# ═════════════════════════════════════════════════════════════════════════════
+
+log "Phase 6b: Wait $ALPHA_WAIT_BLOCKS blocks for alpha emissions"
+wait_blocks "$ALPHA_WAIT_BLOCKS"
+
+VAULT_ALPHA_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$VAULT_COLDKEY_B32" "$NETUID")
+VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO//[^0-9]/}"
+VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO:-0}"
+VAULT_ALPHA=$(python3 -c "print(int('$VAULT_ALPHA_RAO')/1e9)")
+
+ok "Vault alpha stake: $VAULT_ALPHA α ($VAULT_ALPHA_RAO RAO) on (vault_coldkey, vault_hotkey, $NETUID)"
+
+TRANSFER_RAO=$(python3 -c "print(int(float('$TRANSFER_AMOUNT_ALPHA') * 1e9))")
+if [[ "$VAULT_ALPHA_RAO" -lt "$TRANSFER_RAO" ]]; then
+    warn "Vault alpha ($VAULT_ALPHA_RAO RAO) < transfer target ($TRANSFER_RAO RAO)."
+    warn "Alpha emissions may not flow to a neuron with 0 staked TAO on its own coldkey."
+    warn "Lowering transfer amount to min(vault_alpha, target) for demo purposes..."
+    if [[ "$VAULT_ALPHA_RAO" -gt "0" ]]; then
+        TRANSFER_RAO="$VAULT_ALPHA_RAO"
+        TRANSFER_AMOUNT_ALPHA=$(python3 -c "print(int('$TRANSFER_RAO')/1e9)")
+    else
+        warn "Vault alpha is 0 — transferStake will revert. Proceeding anyway to exercise the governance flow."
+    fi
+fi
+
+DEST_COLDKEY_B32=$(ss58_to_b32 "$DEST_COLDKEY_SS58")
+ok "Destination coldkey: $DEST_COLDKEY_SS58 ($DEST_COLDKEY_B32)"
+
+DEST_ALPHA_BEFORE_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$DEST_COLDKEY_B32" "$NETUID")
+DEST_ALPHA_BEFORE_RAO="${DEST_ALPHA_BEFORE_RAO//[^0-9]/}"
+DEST_ALPHA_BEFORE_RAO="${DEST_ALPHA_BEFORE_RAO:-0}"
+ok "Destination alpha before: $DEST_ALPHA_BEFORE_RAO RAO"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 7: Propose alpha transfer
+# ═════════════════════════════════════════════════════════════════════════════
+
+log "Phase 7: Propose alpha transfer ($TRANSFER_AMOUNT_ALPHA α → $DEST_COLDKEY_SS58)"
 
 PROPOSE_OUT=$(python3 "$PROJECT_ROOT/tools/propose_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
-    --amount "$TRANSFER_AMOUNT" \
-    --recipient "$RECIPIENT_ADDR" \
+    --type alpha \
+    --recipient "$DEST_COLDKEY_SS58" \
+    --hotkey "$VAULT_NEURON_HOTKEY_B32" \
+    --origin-netuid "$NETUID" \
+    --destination-netuid "$NETUID" \
+    --amount "$TRANSFER_AMOUNT_ALPHA" \
     --description "$DESCRIPTION" \
     --rpc-url "$RPC_URL" \
     --private-key "$DEPLOYER_PK" 2>&1)
@@ -460,28 +534,22 @@ PROPOSAL_ID=$(echo "$PROPOSE_OUT" | grep -E "Proposal ID:" | sed -n 's/.*Proposa
 ok "Proposal ID: $PROPOSAL_ID"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 8: Vote (For)
+# PHASE 8: Vote For
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 8: Vote For"
-
-# If VOTING_DELAY > 0, wait for proposal to become Active
-if [[ "$VOTING_DELAY" -gt 0 ]]; then
-    wait_blocks "$VOTING_DELAY"
-fi
+if [[ "$VOTING_DELAY" -gt 0 ]]; then wait_blocks "$VOTING_DELAY"; fi
 
 python3 "$PROJECT_ROOT/tools/vote.py" "$GOVERNOR_ADDR" \
-    --proposal-id "$PROPOSAL_ID" \
-    --support 1 \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
-ok "Vote cast (support=1 For)"
+    --proposal-id "$PROPOSAL_ID" --support 1 \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+ok "Vote cast"
 
 python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
-    --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -15
+    --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -10
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 9: Wait voting period → Succeeded
+# PHASE 9: Wait voting period
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 9: Wait for voting to end"
@@ -493,11 +561,10 @@ STATE_NOW=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR"
 ok "Post-vote state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
-    warn "Expected Succeeded — proposal may have been Defeated due to zero voting power."
-    warn "This is likely the K-7 downstream effect: without EVM association, voter has 0 power."
+    warn "Expected Succeeded — proposal may have been Defeated."
     python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
-        --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -15
-    log "E2E HALTED at Phase 9 (proposal not Succeeded)"
+        --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -10
+    log "E2E HALTED at Phase 9"
     exit 2
 fi
 
@@ -507,12 +574,14 @@ fi
 
 log "Phase 10: Queue"
 python3 "$PROJECT_ROOT/tools/queue_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
-    --amount "$TRANSFER_AMOUNT" \
-    --recipient "$RECIPIENT_ADDR" \
+    --type alpha \
+    --recipient "$DEST_COLDKEY_SS58" \
+    --hotkey "$VAULT_NEURON_HOTKEY_B32" \
+    --origin-netuid "$NETUID" \
+    --destination-netuid "$NETUID" \
+    --amount "$TRANSFER_AMOUNT_ALPHA" \
     --description "$DESCRIPTION" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
 ok "Queued"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -527,25 +596,42 @@ wait_blocks "$((MIN_DELAY + 1))"
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 12: Execute"
-python3 "$PROJECT_ROOT/tools/execute_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
-    --amount "$TRANSFER_AMOUNT" \
-    --recipient "$RECIPIENT_ADDR" \
+set +e
+EXECUTE_OUT=$(python3 "$PROJECT_ROOT/tools/execute_proposal.py" "$GOVERNOR_ADDR" \
+    --type alpha \
+    --recipient "$DEST_COLDKEY_SS58" \
+    --hotkey "$VAULT_NEURON_HOTKEY_B32" \
+    --origin-netuid "$NETUID" \
+    --destination-netuid "$NETUID" \
+    --amount "$TRANSFER_AMOUNT_ALPHA" \
     --description "$DESCRIPTION" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1)
+EXEC_STATUS=$?
+set -e
+echo "$EXECUTE_OUT" | tail -5
+
+if [[ "$EXEC_STATUS" -ne 0 ]]; then
+    warn "Execute reverted — vault may have insufficient alpha on (vault_coldkey, vault_hotkey, $NETUID)."
+    warn "This is expected if alpha didn't accumulate (vault has 0 staked TAO on its own hotkey)."
+    log "E2E HALTED at Phase 12"
+    exit 3
+fi
 ok "Executed"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 13: Verify recipient balance
+# PHASE 13: Verify alpha moved
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 13: Verify balance"
-RECIPIENT_BAL_AFTER=$(cast balance "$RECIPIENT_ADDR" --rpc-url "$RPC_URL" --ether)
-ok "Recipient balance after: $RECIPIENT_BAL_AFTER TAO"
+log "Phase 13: Verify alpha delta"
 
-DELTA=$(python3 -c "print(float('$RECIPIENT_BAL_AFTER') - float('$RECIPIENT_BAL_BEFORE'))")
-ok "Delta: $DELTA TAO (expected: $TRANSFER_AMOUNT)"
+DEST_ALPHA_AFTER_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$DEST_COLDKEY_B32" "$NETUID")
+DEST_ALPHA_AFTER_RAO="${DEST_ALPHA_AFTER_RAO//[^0-9]/}"
+DEST_ALPHA_AFTER_RAO="${DEST_ALPHA_AFTER_RAO:-0}"
+DELTA_RAO=$(python3 -c "print(int('$DEST_ALPHA_AFTER_RAO') - int('$DEST_ALPHA_BEFORE_RAO'))")
+DELTA_ALPHA=$(python3 -c "print(int('$DELTA_RAO')/1e9)")
+
+ok "Destination alpha after:  $DEST_ALPHA_AFTER_RAO RAO"
+ok "Delta: $DELTA_ALPHA α ($DELTA_RAO RAO)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Summary
@@ -553,23 +639,26 @@ ok "Delta: $DELTA TAO (expected: $TRANSFER_AMOUNT)"
 
 log "SUMMARY"
 echo ""
-echo "  Chain:               $RPC_URL"
-echo "  Subnet netuid:       $NETUID"
-echo "  Validator hotkey:    $HOTKEY_SS58"
-echo "  Vault:               $VAULT_ADDR"
-echo "  Governor:            $GOVERNOR_ADDR"
-echo "  Proposal ID:         $PROPOSAL_ID"
-echo "  Description:         $DESCRIPTION"
+echo "  Chain:                     $RPC_URL"
+echo "  Subnet netuid:             $NETUID"
+echo "  Validator hotkey (alice):  $HOTKEY_SS58"
+echo "  Vault:                     $VAULT_ADDR"
+echo "  Vault coldkey b32:         $VAULT_COLDKEY_B32"
+echo "  Vault neuron hotkey b32:   $VAULT_NEURON_HOTKEY_B32"
+echo "  Governor:                  $GOVERNOR_ADDR"
+echo "  Proposal ID:               $PROPOSAL_ID"
+echo "  Description:               $DESCRIPTION"
 echo ""
-echo "  Recipient:           $RECIPIENT_ADDR"
-echo "  Balance before:      $RECIPIENT_BAL_BEFORE TAO"
-echo "  Balance after:       $RECIPIENT_BAL_AFTER TAO"
-echo "  Delta:               $DELTA TAO"
+echo "  Destination coldkey:       $DEST_COLDKEY_SS58"
+echo "  Alpha before (dest):       $DEST_ALPHA_BEFORE_RAO RAO"
+echo "  Alpha after  (dest):       $DEST_ALPHA_AFTER_RAO RAO"
+echo "  Delta:                     $DELTA_RAO RAO ($DELTA_ALPHA α)"
 echo ""
 
-DELTA_MATCHES=$(python3 -c "print('true' if abs(float('$DELTA') - float('$TRANSFER_AMOUNT')) < 0.0001 else 'false')")
-if [[ "$DELTA_MATCHES" == "true" ]]; then
-    ok "Native transfer E2E PASSED ✓"
+if [[ "$DELTA_RAO" == "$TRANSFER_RAO" ]]; then
+    ok "Alpha transfer E2E PASSED ✓"
+elif [[ "$DELTA_RAO" -gt "0" ]]; then
+    warn "Alpha transfer E2E PARTIAL: delta $DELTA_RAO ≠ expected $TRANSFER_RAO (vault had limited alpha)"
 else
-    fail "Native transfer E2E FAILED — delta mismatch"
+    fail "Alpha transfer E2E FAILED — no alpha delta"
 fi

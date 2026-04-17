@@ -29,7 +29,7 @@ contract TreasuryVault is TimelockController {
 
         uint256 balanceBefore = address(this).balance;
 
-        try INeuron(NEURON_PRECOMPILE).registerLimit{ value: msg.value }(netuid, hotkey, limitPrice) { }
+        try INeuron(NEURON_PRECOMPILE).registerLimit(netuid, hotkey, limitPrice) { }
         catch {
             revert NeuronRegistrationFailed();
         }

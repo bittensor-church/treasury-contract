@@ -1,6 +1,6 @@
 # Treasury Contract — Local Chain End-to-End Tests
 
-
+c
 Automated end-to-end tests against a local Bittensor subtensor node.
 Three independent flows cover the full governance lifecycle:
 
@@ -79,6 +79,27 @@ Each run creates a fresh subnet by default (costs ~1000 TAO from Alice). Skip su
 
 ```bash
 EXISTING_NETUID=2 ./scripts/localnet-e2e-native.sh
+```
+
+### Reuse full setup between iterations
+
+Once a full run completes Phase 5 (deploy), state is written to
+`/tmp/treasury-e2e-state.env` (netuid, hotkey SS58, vault, governor). Subsequent
+runs skip Phases 1–5 entirely and only re-run the proposal/vote/queue/execute
+flow — great for iterating on proposal scripts without paying the 1000 TAO
+subnet-create cost each time:
+
+```bash
+REUSE_SETUP=1 ./scripts/localnet-e2e-native.sh
+```
+
+Phases 0 + 6 still run (they top-up deployer / vault only if balances are low,
+so repeated runs are cheap).
+
+Force full re-setup:
+```bash
+rm /tmp/treasury-e2e-state.env
+./scripts/localnet-e2e-native.sh
 ```
 
 ### Custom deployer
@@ -187,8 +208,8 @@ The script **does not gate on bug presence** — it runs the intended flow and l
 |---|---|---|
 | `CHAIN_ENDPOINT` | `ws://127.0.0.1:9944` | Subtensor WebSocket |
 | `RPC_URL` | `http://127.0.0.1:9944` | EVM JSON-RPC |
-| `DEPLOYER_ADDR` | `0x7bD3E0F0...` | EVM deployer |
-| `DEPLOYER_PK` | `0x58a595a0...` | Deployer private key |
+| `DEPLOYER_ADDR` | `0x509F12D8...` | EVM deployer (localnet only — random dev key) |
+| `DEPLOYER_PK` | `0x2406c650...` | Deployer private key (localnet only — random dev key) |
 | `ALICE_WALLET` | `alice` | btcli wallet name |
 | `ALICE_HOTKEY_NAME` | `default` | Alice hotkey name |
 | `EXISTING_NETUID` | (empty) | Skip subnet creation — use this netuid |

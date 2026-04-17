@@ -1,45 +1,23 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Treasury Contract — Native TAO Transfer E2E Test (Local Chain)
+# Treasury Contract — ERC20 Transfer E2E Test (Local Chain)
 # ============================================================================
 #
-# Prerequisites:
-#   - Local subtensor running at ws://127.0.0.1:9944
-#   - btcli with Alice wallet (hotkey "default")
-#   - forge/cast installed
-#   - python3 + requirements.txt
+# Same governance flow as localnet-e2e-native.sh, but transfers a MockERC20
+# token from test/Mocks.sol instead of native TAO.
 #
-# Flow:
-#   0. Pre-flight + fund deployer EVM (from Alice)
-#   1. Create subnet + start emissions
-#   2. Create hotkey + register as validator
-#   3. Alice stakes TAO → real voting power
-#   4. Associate EVM voter → staked hotkey (may fail: K-7)
-#   5. Deploy TreasuryVault + TreasuryController (forge script)
-#   6. Fund vault with TAO
-#   7. Propose native transfer
-#   8. Vote (For)
-#   9. Wait voting period → Succeeded
-#   10. Queue
-#   11. Wait minDelay
-#   12. Execute
-#   13. Verify recipient balance
+# Extra phases vs native:
+#   5b. Deploy MockERC20
+#   5c. Mint tokens → vault
+#   13. Verify recipient ERC20 balance (not native balance)
+#
+# State file is shared with native (/tmp/treasury-e2e-state.env) — runs after
+# a successful native setup will reuse subnet/hotkey/vault/governor. ERC20
+# contract address is appended on first erc20 run and reused thereafter.
 #
 # Usage:
-#   chmod +x scripts/localnet-e2e-native.sh
-#   ./scripts/localnet-e2e-native.sh              # full setup + proposal flow
-#
-#   # Reuse previous setup (subnet + hotkey + stake + EVM assoc + deploy):
-#   REUSE_SETUP=1 ./scripts/localnet-e2e-native.sh
-#     → loads /tmp/treasury-e2e-state.env and skips Phases 1–5.
-#     → Phases 0 + 6 still run (top-up deployer / vault if needed).
-#     → proposal/vote/queue/execute always re-run (cheap, repeatable).
-#
-#   # Reuse only existing subnet (still redeploy contracts, re-associate, etc.):
-#   EXISTING_NETUID=2 ./scripts/localnet-e2e-native.sh
-#
-#   # Reset setup cache (force full run):
-#   rm /tmp/treasury-e2e-state.env && ./scripts/localnet-e2e-native.sh
+#   ./scripts/localnet-e2e-erc20.sh              # full setup + flow
+#   REUSE_SETUP=1 ./scripts/localnet-e2e-erc20.sh  # reuse subnet/deploy/ERC20
 # ============================================================================
 
 set -euo pipefail
@@ -53,39 +31,36 @@ ALICE_WALLET="${ALICE_WALLET:-alice}"
 ALICE_HOTKEY_NAME="${ALICE_HOTKEY_NAME:-default}"
 ALICE_COLDKEY_SEED="0xe5be9a5092b81bca64be81d212e7f2f9eba183bb7a90954f7b76361f6edb5c0a"
 
-# Pre-generated deployer EVM account (shared across all E2E scripts)
 DEPLOYER_ADDR="${DEPLOYER_ADDR:-0x509F12D8f6a0fE446055307f3dF2e10245C72494}"
 DEPLOYER_PK="${DEPLOYER_PK:-0x2406c650b21d05b4057cc505e78e2f3e8db513a68c26b99cd030cc2f6c88445b}"
 DEPLOYER_SS58="${DEPLOYER_SS58:-5DCcvGJKfNX16RWpbyvaYBTxFHexCh2wxGfLqS9BsX5GmaSA}"
 
-# Validator hotkey under alice — provides voting power
 VALIDATOR_HOTKEY_NAME="${VALIDATOR_HOTKEY_NAME:-e2e_validator}"
 
-# Amounts
 FUND_DEPLOYER_TAO=10000
 STAKE_AMOUNT="${STAKE_AMOUNT:-5000}"
 VAULT_FUND_AMOUNT="${VAULT_FUND_AMOUNT:-10}"
-TRANSFER_AMOUNT="${TRANSFER_AMOUNT:-1}"
 
-# Fresh recipient EVM address (no conflicting state)
+# ERC20-specific
+ERC20_MINT_AMOUNT="${ERC20_MINT_AMOUNT:-1000}"      # tokens minted to vault (18-dec)
+TRANSFER_AMOUNT="${TRANSFER_AMOUNT:-50}"            # tokens proposed to transfer
+
 RECIPIENT_ADDR="${RECIPIENT_ADDR:-0xd10375caed456c5902D7B155117Dd155398145C7}"
 
-# Governance params (passed to deploy.sh as env vars)
+# Governance params
 export MIN_DELAY="${MIN_DELAY:-1}"
 export VOTING_DELAY="${VOTING_DELAY:-0}"
 export VOTING_PERIOD="${VOTING_PERIOD:-10}"
 export PROPOSAL_THRESHOLD="${PROPOSAL_THRESHOLD:-0}"
 export QUORUM_BPS="${QUORUM_BPS:-100}"
 export PROPOSAL_EXPIRATION="${PROPOSAL_EXPIRATION:-1000}"
-export TAO_LIMIT="${TAO_LIMIT:-1000000000000000000000}"       # 1000 TAO
+export TAO_LIMIT="${TAO_LIMIT:-1000000000000000000000}"
 export ALPHA_LIMIT="${ALPHA_LIMIT:-5000000000000000000000}"
 export ERC20_LIMIT="${ERC20_LIMIT:-10000000000000000000000}"
 export LIMIT_RESET_PERIOD_MIN="${LIMIT_RESET_PERIOD_MIN:-10080}"
 
-# Proposal description — MUST be identical across propose/queue/execute
-DESCRIPTION="E2E Native Transfer Test"
+DESCRIPTION="E2E ERC20 Transfer Test"
 
-# Bittensor local chain requires legacy txs + explicit gas
 EVM_FLAGS="--legacy --gas-price 10000000000"
 FORGE_FLAGS="$EVM_FLAGS --gas-limit 5000000 --broadcast"
 CAST_FLAGS="$EVM_FLAGS --gas-limit 500000"
@@ -93,7 +68,6 @@ CAST_FLAGS="$EVM_FLAGS --gas-limit 500000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Persistent state between runs (REUSE_SETUP reads from here)
 STATE_FILE="${STATE_FILE:-/tmp/treasury-e2e-state.env}"
 REUSE_SETUP="${REUSE_SETUP:-0}"
 
@@ -106,16 +80,6 @@ fail() { echo -e "  \033[1;31m✗ $1\033[0m"; exit 1; }
 
 btcli_cmd() { btcli "$@" --network "$CHAIN_ENDPOINT"; }
 
-# H160 → substrate account_id (bytes32 hex) via HashedAddressMapping
-h160_to_substrate_b32() {
-    python3 -c "
-import hashlib
-h160 = bytes.fromhex('${1#0x}')
-print('0x' + hashlib.blake2b(b'evm:' + h160, digest_size=32).hexdigest())
-"
-}
-
-# H160 → SS58 (prefix 42) via HashedAddressMapping
 h160_to_ss58() {
     python3 -c "
 import hashlib
@@ -137,36 +101,10 @@ print(r.decode())
 read_hotkey_pubkey() {
     python3 -c "import json; print(json.load(open('$HOME/.bittensor/wallets/$1/hotkeys/$2')).get('publicKey',''))"
 }
-
 read_hotkey_ss58() {
     python3 -c "import json; print(json.load(open('$HOME/.bittensor/wallets/$1/hotkeys/$2')).get('ss58Address',''))"
 }
 
-# Poll state() via get_proposal_state.py until it equals $2 (or timeout)
-wait_for_state() {
-    local GOVERNOR="$1"
-    local TARGET_STATE="$2"
-    local PID="$3"
-    local MAX_WAIT="${4:-300}"
-    local WAITED=0
-    while true; do
-        STATE=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR" \
-            --proposal-id "$PID" --rpc-url "$RPC_URL" 2>/dev/null \
-            | grep -E "^State:" | awk '{print $2}' || echo "Unknown")
-        if [[ "$STATE" == "$TARGET_STATE" ]]; then
-            ok "State reached: $TARGET_STATE"
-            return 0
-        fi
-        if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
-            fail "Timeout waiting for state=$TARGET_STATE (current: $STATE after ${MAX_WAIT}s)"
-        fi
-        echo "  waiting for state=$TARGET_STATE (current: $STATE, elapsed ${WAITED}s)"
-        sleep 6
-        WAITED=$((WAITED + 6))
-    done
-}
-
-# Wait N blocks by polling block_number
 wait_blocks() {
     local N="$1"
     local START=$(cast block-number --rpc-url "$RPC_URL")
@@ -181,6 +119,18 @@ wait_blocks() {
     done
 }
 
+# Append/update a KEY=VALUE line in the state file.
+update_state() {
+    local KEY="$1"
+    local VALUE="$2"
+    if [[ -f "$STATE_FILE" ]] && grep -q "^${KEY}=" "$STATE_FILE"; then
+        # Portable in-place update (macOS sed requires '' arg after -i)
+        sed -i '' "s|^${KEY}=.*|${KEY}=${VALUE}|" "$STATE_FILE"
+    else
+        echo "${KEY}=${VALUE}" >> "$STATE_FILE"
+    fi
+}
+
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 
 log "Pre-flight"
@@ -189,7 +139,6 @@ ok "Chain reachable (chain-id: $(cast chain-id --rpc-url "$RPC_URL"))"
 ok "Deployer: $DEPLOYER_ADDR"
 ok "Deployer balance: $(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
-# Ensure Alice wallet (regen from dev seed if missing or mismatched)
 ALICE_DIR="$HOME/.bittensor/wallets/$ALICE_WALLET"
 NEED_REGEN=false
 if [[ ! -d "$ALICE_DIR" ]]; then
@@ -220,14 +169,14 @@ else
     ok "Alice hotkey '$ALICE_HOTKEY_NAME' exists"
 fi
 
-# Ensure forge artifacts exist
-if [[ ! -f "$PROJECT_ROOT/out/TreasuryController.sol/TreasuryController.json" ]]; then
+if [[ ! -f "$PROJECT_ROOT/out/TreasuryController.sol/TreasuryController.json" ]] ||
+   [[ ! -f "$PROJECT_ROOT/out/Mocks.sol/MockERC20.json" ]]; then
     log "Building contracts (forge build)"
     (cd "$PROJECT_ROOT" && forge build --quiet) || fail "forge build failed"
     ok "Compiled"
 fi
 
-# ─── Load cached setup (if REUSE_SETUP=1) ────────────────────────────────────
+# ─── Load cached setup ───────────────────────────────────────────────────────
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
     [[ -f "$STATE_FILE" ]] || fail "REUSE_SETUP=1 but $STATE_FILE not found — run full e2e first"
@@ -242,10 +191,11 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
     ok "  hotkey=$HOTKEY_SS58"
     ok "  vault=$VAULT_ADDR"
     ok "  governor=$GOVERNOR_ADDR"
+    [[ -n "${ERC20_ADDR:-}" ]] && ok "  erc20=$ERC20_ADDR"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 0: Fund deployer EVM account
+# PHASE 0: Fund deployer
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 0: Fund deployer"
@@ -255,11 +205,8 @@ DEPLOYER_BAL_INT=$(python3 -c "print(int(float('$DEPLOYER_BAL')))")
 
 if [[ "$DEPLOYER_BAL_INT" -lt 50 ]]; then
     btcli_cmd wallet transfer \
-        --wallet-name "$ALICE_WALLET" \
-        --dest "$DEPLOYER_SS58" \
-        --amount "$FUND_DEPLOYER_TAO" \
-        --allow-death \
-        --no-prompt 2>&1 | tail -2
+        --wallet-name "$ALICE_WALLET" --dest "$DEPLOYER_SS58" \
+        --amount "$FUND_DEPLOYER_TAO" --allow-death --no-prompt 2>&1 | tail -2
     ok "Transferred $FUND_DEPLOYER_TAO TAO → $DEPLOYER_ADDR"
 else
     ok "Already funded (${DEPLOYER_BAL} TAO)"
@@ -267,7 +214,7 @@ fi
 ok "Deployer balance: $(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 1: Create subnet + start emissions
+# PHASE 1: Subnet
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -282,7 +229,7 @@ else
         --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" \
         --no-prompt --subnet-name "treasury_e2e" 2>&1)
     NETUID=$(echo "$OUTPUT" | sed -n 's/.*netuid: \([0-9]*\).*/\1/p' | tail -1)
-    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid from create output"; }
+    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid"; }
     ok "Created subnet netuid=$NETUID"
 
     btcli_cmd subnets start --netuid "$NETUID" \
@@ -295,7 +242,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 2: Create hotkey + register as validator
+# PHASE 2: Validator hotkey
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -316,7 +263,6 @@ else
     ok "Validator hotkey bytes32: $HOTKEY_B32"
     ok "Validator hotkey SS58:    $HOTKEY_SS58"
 
-    # Register on subnet (retry if rate-limited)
     for attempt in 1 2 3; do
         REG_OUT=$(btcli_cmd subnets register --netuid "$NETUID" \
             --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" --no-prompt 2>&1)
@@ -330,7 +276,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 3: Stake TAO → real voting power
+# PHASE 3: Stake
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -344,8 +290,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 4: Associate deployer EVM address → staked hotkey
-# (Always runs — pallet-side rate limit makes duplicate calls a no-op / warn.)
+# PHASE 4: EVM ↔ hotkey association (always runs)
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 4: Associate EVM → hotkey (for real voting power)"
@@ -355,10 +300,8 @@ HOTKEY_MNEMONIC=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE'))
 
 set +e
 ASSOCIATE_OUTPUT=$(python3 "$PROJECT_ROOT/tools/associate_evm.py" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" \
-    --netuid "$NETUID" \
-    --hotkey "$HOTKEY_SS58" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" \
+    --netuid "$NETUID" --hotkey "$HOTKEY_SS58" \
     --hotkey-uri "$HOTKEY_MNEMONIC" 2>&1)
 ASSOC_STATUS=$?
 set -e
@@ -366,7 +309,7 @@ set -e
 if [[ "$ASSOC_STATUS" -eq 0 ]]; then
     ok "EVM → hotkey association succeeded"
 else
-    warn "associate_evm failed. Continuing — voter may have 0 voting power."
+    warn "associate_evm failed (rate-limit if already done, otherwise investigate)."
     echo "$ASSOCIATE_OUTPUT" | tail -10
 fi
 
@@ -383,12 +326,8 @@ else
     export PRIVATE_KEY="$DEPLOYER_PK"
     export NETUID="$NETUID"
 
-    # Capture forge script output — parse deployed addresses from console.log
     DEPLOY_OUT=$(cd "$PROJECT_ROOT" && forge script script/Deploy.s.sol:DeployGovernance \
-        --rpc-url "$RPC_URL" \
-        --broadcast \
-        --legacy \
-        -vv 2>&1)
+        --rpc-url "$RPC_URL" --broadcast --legacy -vv 2>&1)
 
     VAULT_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Vault deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
     GOVERNOR_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Governor deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
@@ -402,9 +341,8 @@ else
     VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
     ok "Vault SS58: $VAULT_SS58"
 
-    # Persist setup so subsequent runs can REUSE_SETUP=1
     cat > "$STATE_FILE" <<EOF
-# Auto-generated by localnet-e2e-native.sh — re-run with REUSE_SETUP=1 to reuse.
+# Auto-generated by localnet-e2e scripts — re-run with REUSE_SETUP=1 to reuse.
 NETUID=$NETUID
 HOTKEY_B32=$HOTKEY_B32
 HOTKEY_SS58=$HOTKEY_SS58
@@ -416,38 +354,69 @@ EOF
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 6: Fund vault
+# PHASE 5b: Deploy MockERC20 (cached per setup)
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 6: Fund vault (target: $VAULT_FUND_AMOUNT TAO)"
-
-VAULT_BAL=$(cast balance "$VAULT_ADDR" --rpc-url "$RPC_URL" --ether 2>/dev/null || echo "0")
-VAULT_BAL_INT=$(python3 -c "print(int(float('$VAULT_BAL')))")
-
-if [[ "$VAULT_BAL_INT" -lt "$VAULT_FUND_AMOUNT" ]]; then
-    btcli_cmd wallet transfer \
-        --wallet-name "$ALICE_WALLET" \
-        --dest "$VAULT_SS58" \
-        --amount "$VAULT_FUND_AMOUNT" \
-        --allow-death \
-        --no-prompt 2>&1 | tail -2
-    ok "Funded vault"
+if [[ -n "${ERC20_ADDR:-}" ]] && [[ "$REUSE_SETUP" == "1" ]]; then
+    log "Phase 5b: SKIPPED (ERC20 from cache: $ERC20_ADDR)"
 else
-    ok "Vault already funded (${VAULT_BAL} TAO ≥ $VAULT_FUND_AMOUNT TAO target)"
+    log "Phase 5b: Deploy MockERC20"
+
+    # forge create writes deployed address to stdout ("Deployed to: 0x...")
+    ERC20_DEPLOY_OUT=$(cd "$PROJECT_ROOT" && forge create test/Mocks.sol:MockERC20 \
+        --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" \
+        --broadcast --legacy --gas-price 10000000000 --gas-limit 5000000 2>&1)
+    ERC20_ADDR=$(echo "$ERC20_DEPLOY_OUT" | grep -E "Deployed to:" | awk '{print $3}')
+    [[ -z "$ERC20_ADDR" ]] && { echo "$ERC20_DEPLOY_OUT" | tail -20; fail "Could not parse MockERC20 address"; }
+    ok "MockERC20: $ERC20_ADDR"
+
+    update_state "ERC20_ADDR" "$ERC20_ADDR"
+    ok "Saved ERC20 address to $STATE_FILE"
 fi
-ok "Vault balance: $(cast balance "$VAULT_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 7: Propose native transfer
+# PHASE 6: Mint ERC20 to vault (top-up if below target)
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 7: Propose native transfer ($TRANSFER_AMOUNT TAO → $RECIPIENT_ADDR)"
+log "Phase 6: Mint ERC20 to vault (target: $ERC20_MINT_AMOUNT tokens)"
 
-RECIPIENT_BAL_BEFORE=$(cast balance "$RECIPIENT_ADDR" --rpc-url "$RPC_URL" --ether)
-ok "Recipient balance before: $RECIPIENT_BAL_BEFORE TAO"
+MINT_WEI=$(cast to-wei "$ERC20_MINT_AMOUNT" ether)
+
+VAULT_ERC20_BAL_WEI=$(cast call "$ERC20_ADDR" "balanceOf(address)(uint256)" "$VAULT_ADDR" \
+    --rpc-url "$RPC_URL" 2>/dev/null | awk '{print $1}' || echo "0")
+# cast prints decimal — strip any bracket formatting just in case
+VAULT_ERC20_BAL_WEI="${VAULT_ERC20_BAL_WEI//[^0-9]/}"
+
+BAL_GE_TARGET=$(python3 -c "print('1' if int('${VAULT_ERC20_BAL_WEI:-0}') >= int('$MINT_WEI') else '0')")
+
+if [[ "$BAL_GE_TARGET" == "1" ]]; then
+    ok "Vault already has enough ERC20 (${VAULT_ERC20_BAL_WEI} wei ≥ $MINT_WEI wei target)"
+else
+    cast send "$ERC20_ADDR" "mint(address,uint256)" "$VAULT_ADDR" "$MINT_WEI" \
+        --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" \
+        --legacy --gas-price 10000000000 --gas-limit 200000 2>&1 | tail -3
+    ok "Minted $ERC20_MINT_AMOUNT tokens → vault"
+fi
+
+VAULT_ERC20_BAL_WEI=$(cast call "$ERC20_ADDR" "balanceOf(address)(uint256)" "$VAULT_ADDR" \
+    --rpc-url "$RPC_URL" | awk '{print $1}')
+VAULT_ERC20_BAL=$(cast from-wei "$VAULT_ERC20_BAL_WEI")
+ok "Vault ERC20 balance: $VAULT_ERC20_BAL tokens"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 7: Propose ERC20 transfer
+# ═════════════════════════════════════════════════════════════════════════════
+
+log "Phase 7: Propose ERC20 transfer ($TRANSFER_AMOUNT tokens → $RECIPIENT_ADDR)"
+
+RECIPIENT_ERC20_BAL_BEFORE_WEI=$(cast call "$ERC20_ADDR" "balanceOf(address)(uint256)" "$RECIPIENT_ADDR" \
+    --rpc-url "$RPC_URL" | awk '{print $1}')
+RECIPIENT_ERC20_BAL_BEFORE=$(cast from-wei "$RECIPIENT_ERC20_BAL_BEFORE_WEI")
+ok "Recipient ERC20 balance before: $RECIPIENT_ERC20_BAL_BEFORE tokens"
 
 PROPOSE_OUT=$(python3 "$PROJECT_ROOT/tools/propose_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
+    --type erc20 \
+    --token "$ERC20_ADDR" \
     --amount "$TRANSFER_AMOUNT" \
     --recipient "$RECIPIENT_ADDR" \
     --description "$DESCRIPTION" \
@@ -460,28 +429,25 @@ PROPOSAL_ID=$(echo "$PROPOSE_OUT" | grep -E "Proposal ID:" | sed -n 's/.*Proposa
 ok "Proposal ID: $PROPOSAL_ID"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 8: Vote (For)
+# PHASE 8: Vote For
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 8: Vote For"
 
-# If VOTING_DELAY > 0, wait for proposal to become Active
 if [[ "$VOTING_DELAY" -gt 0 ]]; then
     wait_blocks "$VOTING_DELAY"
 fi
 
 python3 "$PROJECT_ROOT/tools/vote.py" "$GOVERNOR_ADDR" \
-    --proposal-id "$PROPOSAL_ID" \
-    --support 1 \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+    --proposal-id "$PROPOSAL_ID" --support 1 \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
 ok "Vote cast (support=1 For)"
 
 python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
     --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -15
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 9: Wait voting period → Succeeded
+# PHASE 9: Wait voting period
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 9: Wait for voting to end"
@@ -493,8 +459,7 @@ STATE_NOW=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR"
 ok "Post-vote state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
-    warn "Expected Succeeded — proposal may have been Defeated due to zero voting power."
-    warn "This is likely the K-7 downstream effect: without EVM association, voter has 0 power."
+    warn "Expected Succeeded — proposal may have been Defeated (check voting power)."
     python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
         --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -15
     log "E2E HALTED at Phase 9 (proposal not Succeeded)"
@@ -507,12 +472,12 @@ fi
 
 log "Phase 10: Queue"
 python3 "$PROJECT_ROOT/tools/queue_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
+    --type erc20 \
+    --token "$ERC20_ADDR" \
     --amount "$TRANSFER_AMOUNT" \
     --recipient "$RECIPIENT_ADDR" \
     --description "$DESCRIPTION" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
 ok "Queued"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -528,24 +493,28 @@ wait_blocks "$((MIN_DELAY + 1))"
 
 log "Phase 12: Execute"
 python3 "$PROJECT_ROOT/tools/execute_proposal.py" "$GOVERNOR_ADDR" \
-    --type native \
+    --type erc20 \
+    --token "$ERC20_ADDR" \
     --amount "$TRANSFER_AMOUNT" \
     --recipient "$RECIPIENT_ADDR" \
     --description "$DESCRIPTION" \
-    --rpc-url "$RPC_URL" \
-    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
 ok "Executed"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 13: Verify recipient balance
+# PHASE 13: Verify recipient ERC20 balance
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 13: Verify balance"
-RECIPIENT_BAL_AFTER=$(cast balance "$RECIPIENT_ADDR" --rpc-url "$RPC_URL" --ether)
-ok "Recipient balance after: $RECIPIENT_BAL_AFTER TAO"
+log "Phase 13: Verify ERC20 balance"
 
-DELTA=$(python3 -c "print(float('$RECIPIENT_BAL_AFTER') - float('$RECIPIENT_BAL_BEFORE'))")
-ok "Delta: $DELTA TAO (expected: $TRANSFER_AMOUNT)"
+RECIPIENT_ERC20_BAL_AFTER_WEI=$(cast call "$ERC20_ADDR" "balanceOf(address)(uint256)" "$RECIPIENT_ADDR" \
+    --rpc-url "$RPC_URL" | awk '{print $1}')
+RECIPIENT_ERC20_BAL_AFTER=$(cast from-wei "$RECIPIENT_ERC20_BAL_AFTER_WEI")
+ok "Recipient ERC20 balance after: $RECIPIENT_ERC20_BAL_AFTER tokens"
+
+DELTA_WEI=$(python3 -c "print(int('$RECIPIENT_ERC20_BAL_AFTER_WEI') - int('$RECIPIENT_ERC20_BAL_BEFORE_WEI'))")
+DELTA=$(cast from-wei "$DELTA_WEI")
+ok "Delta: $DELTA tokens (expected: $TRANSFER_AMOUNT)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Summary
@@ -558,18 +527,19 @@ echo "  Subnet netuid:       $NETUID"
 echo "  Validator hotkey:    $HOTKEY_SS58"
 echo "  Vault:               $VAULT_ADDR"
 echo "  Governor:            $GOVERNOR_ADDR"
+echo "  MockERC20:           $ERC20_ADDR"
 echo "  Proposal ID:         $PROPOSAL_ID"
 echo "  Description:         $DESCRIPTION"
 echo ""
 echo "  Recipient:           $RECIPIENT_ADDR"
-echo "  Balance before:      $RECIPIENT_BAL_BEFORE TAO"
-echo "  Balance after:       $RECIPIENT_BAL_AFTER TAO"
-echo "  Delta:               $DELTA TAO"
+echo "  Balance before:      $RECIPIENT_ERC20_BAL_BEFORE tokens"
+echo "  Balance after:       $RECIPIENT_ERC20_BAL_AFTER tokens"
+echo "  Delta:               $DELTA tokens"
 echo ""
 
-DELTA_MATCHES=$(python3 -c "print('true' if abs(float('$DELTA') - float('$TRANSFER_AMOUNT')) < 0.0001 else 'false')")
-if [[ "$DELTA_MATCHES" == "true" ]]; then
-    ok "Native transfer E2E PASSED ✓"
+EXPECTED_WEI=$(cast to-wei "$TRANSFER_AMOUNT" ether)
+if [[ "$DELTA_WEI" == "$EXPECTED_WEI" ]]; then
+    ok "ERC20 transfer E2E PASSED ✓"
 else
-    fail "Native transfer E2E FAILED — delta mismatch"
+    fail "ERC20 transfer E2E FAILED — delta mismatch (got $DELTA_WEI wei, expected $EXPECTED_WEI wei)"
 fi
