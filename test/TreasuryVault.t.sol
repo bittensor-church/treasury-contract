@@ -188,6 +188,19 @@ contract TreasuryVaultTest is Test {
         assertFalse(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), user));
     }
 
+    function test_Timelock_AddressZeroIsNotOpenExecutor() public {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TreasuryVault fresh = new TreasuryVault(1 days, proposers, executors, admin);
+
+        assertFalse(fresh.hasRole(fresh.EXECUTOR_ROLE(), address(0)));
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        fresh.execute(address(0), 0, "", bytes32(0), bytes32(0));
+    }
+
     function testFuzz_RegisterNeuron_HighValues(uint16 netuid, bytes32 hotkey) public {
         uint256 sentAmount = 20 ether;
         uint64 burnAmount = 15 ether;

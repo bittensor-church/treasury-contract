@@ -588,12 +588,12 @@ contract TreasuryControllerTest is Test {
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
     }
 
-    function test_NewMechanism_Succeeds_DespiteAgainstMajority() public {
+    function test_NewMechanism_Defeated_WhenAgainstMajority() public {
         _setupVoter(voter1, 400, 1, true);
         _setupVoter(voter2, 9600, 2, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
-        uint256 pid = _createNativeProposal(voter1, 10, "Threshold Reached With Heavy Against");
+        uint256 pid = _createNativeProposal(voter1, 10, "Quorum Reached But Against Majority");
         _rollToActive();
 
         vm.prank(voter1);
@@ -602,7 +602,7 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 0);
 
         _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
 
     function test_NewMechanism_Defeated_BelowThreshold() public {

@@ -1,6 +1,5 @@
 # Treasury Contract — Local Chain End-to-End Tests
 
-c
 Automated end-to-end tests against a local Bittensor subtensor node.
 Three independent flows cover the full governance lifecycle:
 
@@ -134,8 +133,6 @@ Alice stakes 5000 TAO to the validator hotkey (ratio adjustable). Stake on the s
 
 Calls `tools/associate_evm.py` to bind the **voter EVM address** to the staked hotkey. Without this, `IUidLookup` returns no mapping and the voter has 0 voting power.
 
-> **⚠ Known audit finding K-7** — `associate_evm.py` uses an older pallet ABI. If this phase fails, the voting flow downstream will also fail (voter will have 0 voting power). The script continues regardless so you can observe the downstream effect.
-
 ### Phase 5: Deploy Vault + Controller
 
 Delegates to `deploy.sh` (which runs `forge script Deploy.s.sol`). Parses deployed addresses from Forge output.
@@ -163,8 +160,6 @@ Transfers 10 TAO from Alice → vault's EVM-mapped SS58 address (for the treasur
 
 `tools/vote.py --proposal-id $PID --support 1`.
 
-> **⚠ Known audit finding K-4** — `_voteSucceeded` is identical to `_quorumReached`. A proposal passes when quorum is reached, regardless of Against majority. The test uses a single For vote that reaches quorum.
-
 ### Phase 9: Wait voting period
 
 Polls `get_proposal_state.py` until the proposal state transitions out of `Active` (should become `Succeeded` after `VOTING_PERIOD` blocks).
@@ -181,26 +176,9 @@ Sleeps `MIN_DELAY` blocks (timelock).
 
 `tools/execute_proposal.py --type native ...`.
 
-> **⚠ Known audit finding K-3** — Timelock executors list contains `address(0)` (open executor). Anyone can call `execute`. The script uses the deployer but any EVM account would work.
-
 ### Phase 13: Verify recipient balance
 
 Reads the recipient's native balance before and after execute, asserts the delta matches the proposed amount.
-
-## Expected observations (pre-fix)
-
-Running against the **current** (pre-fix) codebase, expect:
-
-| Phase | Expected |
-|---|---|
-| 4 | **FAIL** — associate_evm (K-7) pallet ABI mismatch |
-| 7 | Might fail if voter has 0 voting power and `proposalThreshold > 0` — default threshold is 0 so propose should succeed |
-| 8 | Vote accepted but with `weight = 0` (no association) |
-| 9 | State becomes `Succeeded` anyway (K-4: quorum check, 0 ≥ 0) OR `Defeated` (depends on quorum math) |
-| 12 | If state reached `Queued`, execute succeeds via K-3 |
-| 13 | Recipient gets the TAO if full flow made it through |
-
-The script **does not gate on bug presence** — it runs the intended flow and logs failures so you can see which audit findings actually bite.
 
 ## Environment variables
 
@@ -238,10 +216,6 @@ Voting period hasn't elapsed. Each local block is ~6–12s (depends on your subt
 
 Add `--broadcast`. Scripts already set this via `FORGE_FLAGS`.
 
-### `associate_evm` fails with `BadOrigin` or `InvalidSignature`
-
-Known audit finding K-7. The pallet's `do_associate_evm_key` signature format changed (commit `943c29ce`, 2025-09-12) and `tools/associate_evm.py` still sends the old format. Left as-is per audit scope.
-
 ### Proposal reverts in execute with `TimelockInvalidOperationState`
 
 Check the `MIN_DELAY` has elapsed and the proposal is in `Queued` state. Run `get_proposal_state.py` between Queue and Execute to confirm.
@@ -257,7 +231,7 @@ Proposal states:
 ```
 Pending   → before VOTING_DELAY blocks elapse
 Active    → voting window open
-Succeeded → vote ended, quorum met (see K-4 caveat)
+Succeeded → vote ended, quorum met and For majority
 Queued    → Succeeded + queue() called
 Executed  → Queued + execute() called after MIN_DELAY
 Defeated  → vote ended without meeting quorum

@@ -454,8 +454,8 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes,) = _getTallyResult(proposalId);
-        return forVotes >= quorum(proposalSnapshot(proposalId));
+        (uint256 forVotes, uint256 againstVotes) = _getTallyResult(proposalId);
+        return forVotes > againstVotes;
     }
 
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {

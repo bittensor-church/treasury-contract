@@ -14,7 +14,7 @@
 #   1. Create subnet + start emissions
 #   2. Create hotkey + register as validator
 #   3. Alice stakes TAO → real voting power
-#   4. Associate EVM voter → staked hotkey (may fail: K-7)
+#   4. Associate EVM voter → staked hotkey
 #   5. Deploy TreasuryVault + TreasuryController (forge script)
 #   6. Fund vault with TAO
 #   7. Propose native transfer
@@ -494,7 +494,7 @@ ok "Post-vote state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
     warn "Expected Succeeded — proposal may have been Defeated due to zero voting power."
-    warn "This is likely the K-7 downstream effect: without EVM association, voter has 0 power."
+    warn "Check EVM↔hotkey association: voter with 0 power cannot pass proposals."
     python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
         --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 | tail -15
     log "E2E HALTED at Phase 9 (proposal not Succeeded)"
