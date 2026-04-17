@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 CLI for calling: castVote(uint256 proposalId, uint8 support)
+
+Only support=1 (For/Yes) is accepted by the controller. Against and Abstain
+revert with InvalidVoteSupport.
 """
 
 import argparse
@@ -16,13 +19,17 @@ from utils.common import setup_web3_with_account, add_web3_arguments
 from utils.tx_handler import execute_transaction
 
 def main():
-    parser = argparse.ArgumentParser(description="Cast Vote on Proposal")
+    parser = argparse.ArgumentParser(description="Cast Yes Vote on Proposal")
     parser.add_argument("contract", help="Governor contract address")
     parser.add_argument("--proposal-id", required=True, type=int)
-    parser.add_argument("--support", required=True, type=int, help="0=Against, 1=For, 2=Abstain")
+    parser.add_argument("--support", type=int, default=1,
+                        help="Only 1 (For/Yes) is accepted. Default: 1")
 
     add_web3_arguments(parser)
     args = parser.parse_args()
+
+    if args.support != 1:
+        sys.exit("Controller accepts only support=1 (Yes). Against/Abstain are disabled.")
 
     w3, account = setup_web3_with_account(args)
 

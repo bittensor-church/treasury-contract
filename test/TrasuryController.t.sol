@@ -122,6 +122,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid, 1);
         _rollToEnd();
+        controller.finalize(pid);
     }
 
     function _queueAndExecuteNative(address recipient, uint256 amount, string memory desc) internal {
@@ -185,6 +186,7 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
         assertTrue(controller.hasVoted(pid, voter1));
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
     }
 
@@ -218,6 +220,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid, 1);
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
 
         _setupVoter(voter1, 0, 1, true);
@@ -227,6 +230,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid2, 1);
         _rollToEnd();
+        controller.finalize(pid2);
         assertEq(uint256(controller.state(pid2)), uint256(IGovernor.ProposalState.Defeated));
     }
 
@@ -295,6 +299,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid, 1);
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
         vm.roll(block.number + PROPOSAL_EXPIRATION_BLOCKS + 1);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Expired));
@@ -306,6 +311,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid, 1);
         _rollToEnd();
+        controller.finalize(pid);
 
         uint256 deadline = controller.proposalDeadline(pid);
         vm.roll(deadline + PROPOSAL_EXPIRATION_BLOCKS);
@@ -379,6 +385,7 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
 
@@ -398,21 +405,38 @@ contract TreasuryControllerTest is Test {
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Canceled));
     }
 
-    function test_Proposal_Fails_AgainstVotes_Majority() public {
-        _setupVoter(voter1, 399, 1, true);
-        _setupVoter(voter2, 600, 2, true);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
-
-        uint256 pid = _createNativeProposal(voter1, 10, "Controversial");
+    function test_CastVote_Revert_AgainstSupport() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Against");
         _rollToActive();
 
         vm.prank(voter1);
-        controller.castVote(pid, 1);
-        vm.prank(voter2);
+        vm.expectRevert(TreasuryController.InvalidVoteSupport.selector);
         controller.castVote(pid, 0);
+    }
 
-        _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    function test_CastVote_Revert_AbstainSupport() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Abstain");
+        _rollToActive();
+
+        vm.prank(voter1);
+        vm.expectRevert(TreasuryController.InvalidVoteSupport.selector);
+        controller.castVote(pid, 2);
+    }
+
+    function test_CastVoteBySig_Disabled() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Sig disabled");
+        _rollToActive();
+
+        vm.expectRevert(TreasuryController.VoteBySigDisabled.selector);
+        controller.castVoteBySig(pid, 1, voter1, "");
+    }
+
+    function test_CastVoteWithReasonAndParamsBySig_Disabled() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Sig params disabled");
+        _rollToActive();
+
+        vm.expectRevert(TreasuryController.VoteBySigDisabled.selector);
+        controller.castVoteWithReasonAndParamsBySig(pid, 1, voter1, "", "", "");
     }
 
     function test_Proposal_Fails_QuorumNotReached_DespiteMajority() public {
@@ -424,6 +448,7 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid, 1);
         _rollToEnd();
+        controller.finalize(pid);
 
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
@@ -473,6 +498,8 @@ contract TreasuryControllerTest is Test {
         vm.prank(voter1);
         controller.castVote(pid2, 1);
         _rollToEnd();
+        controller.finalize(pid1);
+        controller.finalize(pid2);
 
         controller.queueNativeTransfer(address(target), amount1, desc1);
         controller.queueNativeTransfer(address(target), amount2, desc2);
@@ -574,7 +601,22 @@ contract TreasuryControllerTest is Test {
         assertTrue(controller.hasVoted(pid, voter1));
     }
 
-    function test_NewMechanism_Succeeds_ExactlyOnThreshold() public {
+    function test_NewMechanism_Succeeds_StrictlyAboveThreshold() public {
+        _setupVoter(voter1, 401, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Above Threshold");
+        _rollToActive();
+
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        _rollToEnd();
+        controller.finalize(pid);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_NewMechanism_Defeated_OnExactThreshold() public {
         _setupVoter(voter1, 400, 1, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
@@ -585,23 +627,7 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
-    }
-
-    function test_NewMechanism_Defeated_WhenAgainstMajority() public {
-        _setupVoter(voter1, 400, 1, true);
-        _setupVoter(voter2, 9600, 2, true);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
-
-        uint256 pid = _createNativeProposal(voter1, 10, "Quorum Reached But Against Majority");
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 1);
-        vm.prank(voter2);
-        controller.castVote(pid, 0);
-
-        _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
 
@@ -616,20 +642,7 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         _rollToEnd();
-        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
-    }
-
-    function test_NewMechanism_AgainstVotes_DoNotContributeToThreshold() public {
-        _setupVoter(voter1, 10000, 1, true);
-        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
-
-        uint256 pid = _createNativeProposal(voter1, 10, "Only Against");
-        _rollToActive();
-
-        vm.prank(voter1);
-        controller.castVote(pid, 0);
-
-        _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
     }
 
@@ -644,7 +657,7 @@ contract TreasuryControllerTest is Test {
         mockUidLookup.addLookup(TARGET_NETUID, multiVoter, 11);
         mockMetagraph.setHotkey(TARGET_NETUID, 11, bytes32(uint256(11)));
         mockMetagraph.setValidatorStatus(TARGET_NETUID, 11, true);
-        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(11)), 200);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(11)), 201);
 
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
@@ -655,9 +668,10 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         assertTrue(controller.hasVoted(pid, multiVoter));
-        assertEq(controller.getVotingPowerForAddress(multiVoter), 400);
+        assertEq(controller.getVotingPowerForAddress(multiVoter), 401);
 
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
     }
 
@@ -672,7 +686,7 @@ contract TreasuryControllerTest is Test {
         mockUidLookup.addLookup(TARGET_NETUID, mixedVoter, 21);
         mockMetagraph.setHotkey(TARGET_NETUID, 21, bytes32(uint256(21)));
         mockMetagraph.setValidatorStatus(TARGET_NETUID, 21, true);
-        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(21)), 300);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(21)), 301);
 
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
 
@@ -683,10 +697,130 @@ contract TreasuryControllerTest is Test {
         controller.castVote(pid, 1);
 
         assertTrue(controller.hasVoted(pid, mixedVoter));
-        assertEq(controller.getVotingPowerForAddress(mixedVoter), 400);
+        assertEq(controller.getVotingPowerForAddress(mixedVoter), 401);
 
         _rollToEnd();
+        controller.finalize(pid);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_Finalize_Revert_BeforeDeadline() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Too Early");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+
+        vm.expectRevert(TreasuryController.NotYetFinalizable.selector);
+        controller.finalize(pid);
+    }
+
+    function test_Finalize_Revert_AlreadyFinalized() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Twice");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        controller.finalize(pid);
+
+        vm.expectRevert(TreasuryController.AlreadyFinalized.selector);
+        controller.finalize(pid);
+    }
+
+    function test_Finalize_Permissionless() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Anyone Finalizes");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        controller.finalize(pid);
+
+        assertTrue(controller.isFinalized(pid));
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_Finalize_SnapshotsVotingPower_ImmuneToPostFinalizeDrift() public {
+        _setupVoter(voter1, 1000, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Snapshot Immune");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        controller.finalize(pid);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+
+        bytes32 key = bytes32(uint256(uint160(voter1)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, 0);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 1e18);
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_Finalize_Defeated_NotFlippableByLaterPowerShift() public {
+        _setupVoter(voter1, 300, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Below Quorum At Close");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        controller.finalize(pid);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+
+        bytes32 key = bytes32(uint256(uint160(voter1)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, 1e18);
+
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_State_PostDeadlinePreFinalize_IsDefeated() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Before Finalize");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        assertFalse(controller.isFinalized(pid));
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+
+        controller.finalize(pid);
+        assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_Queue_Revert_WithoutFinalize() public {
+        string memory desc = "Missing Finalize";
+        uint256 pid = _createNativeProposal(voter1, 100, desc);
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        vm.expectRevert();
+        controller.queueNativeTransfer(address(target), 100, desc);
+    }
+
+    function test_Finalize_EmitsEvent() public {
+        _setupVoter(voter1, 1000, 1, true);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        uint256 pid = _createNativeProposal(voter1, 10, "Emit Event");
+        _rollToActive();
+        vm.prank(voter1);
+        controller.castVote(pid, 1);
+        _rollToEnd();
+
+        uint256 expectedThreshold = (10000 * SUPPORT_THRESHOLD_NUMERATOR) / 10000;
+        vm.expectEmit(true, false, false, true);
+        emit TreasuryController.ProposalFinalized(pid, 1000, expectedThreshold, true);
+        controller.finalize(pid);
     }
 
     function test_MultiUid_BothNonValidator_Revert() public {

@@ -181,19 +181,18 @@ python3 tools/propose_and_vote_proposal.py $GOVERNOR \
 
 ### 2. Cast Vote — `vote.py`
 
-Cast your vote on an active proposal. Support values: `0` = Against, `1` = For, `2` = Abstain.
+Cast a Yes vote on an active proposal. Only `support=1` (For) is accepted — Against and Abstain revert with `InvalidVoteSupport`, and `castVoteBySig`/`castVoteWithReasonAndParamsBySig` are disabled. A proposal succeeds when For-votes strictly exceed the quorum threshold (`QUORUM_BPS` of total network voting power at the proposal snapshot).
 
 ```bash
 python3 tools/vote.py $GOVERNOR \
     --proposal-id <PROPOSAL_ID> \
-    --support 1 \
     --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY
 ```
 
 ### 3. Check Proposal State — `get_proposal_state.py`
 
-Monitor the status of a proposal. Shows state (Pending/Active/Canceled/Defeated/Succeeded/Queued/Expired/Executed), voting deadline, and vote counts.
+Monitor the status of a proposal. Shows state (Pending/Active/Canceled/Defeated/Succeeded/Queued/Expired/Executed) and voting deadline.
 
 ```bash
 python3 tools/get_proposal_state.py $GOVERNOR \

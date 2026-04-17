@@ -19,7 +19,7 @@ contract DeployGovernance is Script {
         uint256 votingDelayEnv = vm.envOr("VOTING_DELAY", uint256(0));
         uint256 votingPeriodEnv = vm.envOr("VOTING_PERIOD", uint256(5));
         uint256 proposalThresholdEnv = vm.envOr("PROPOSAL_THRESHOLD", uint256(0));
-        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(100));
+        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(5000));
 
         uint256 taoLimit = vm.envOr("TAO_LIMIT", uint256(1000 ether));
         uint256 alphaLimit = vm.envOr("ALPHA_LIMIT", uint256(5000 ether));

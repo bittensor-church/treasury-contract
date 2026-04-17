@@ -188,7 +188,7 @@ python3 tools/get_proposal_state.py $GOVERNOR \
 
 ### 8. Cast Vote
 
-Cast your vote (Support: `0` = Against, `1` = For, `2` = Abstain) on the active proposal.
+Cast a Yes vote on the active proposal. Only `support=1` (For) is accepted — Against/Abstain and `castVoteBySig` are disabled. A proposal succeeds when For-votes strictly exceed the quorum threshold (`QUORUM_BPS` of total network voting power).
 
 ```bash
 python3 tools/vote.py $GOVERNOR \

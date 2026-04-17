@@ -13,6 +13,7 @@ contract TreasuryVault is TimelockController {
     error NeuronRegistrationFailed();
     error RefundError();
     error LimitPriceOverflow();
+    error InsufficientValueForBurn(uint256 burned, uint256 provided);
 
     event NeuronRegistration(uint16 indexed netuid, bytes32 hotkey, address indexed caller);
 
@@ -35,6 +36,9 @@ contract TreasuryVault is TimelockController {
         }
 
         uint256 consumed = balanceBefore - address(this).balance;
+        if (consumed > msg.value) {
+            revert InsufficientValueForBurn(consumed, msg.value);
+        }
         uint256 refundAmount = msg.value - consumed;
 
         if (refundAmount > 0) {
