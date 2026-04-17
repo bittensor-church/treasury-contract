@@ -160,9 +160,9 @@ Transfers 10 TAO from Alice → vault's EVM-mapped SS58 address (for the treasur
 
 `tools/vote.py --proposal-id $PID --support 1`.
 
-### Phase 9: Wait voting period
+### Phase 9: Wait voting period + finalize
 
-Polls `get_proposal_state.py` until the proposal state transitions out of `Active` (should become `Succeeded` after `VOTING_PERIOD` blocks).
+Waits `VOTING_PERIOD` blocks for voting to close, then calls `tools/finalize_proposal.py --proposal-id $PID` to snapshot the outcome. `finalize` must run after the deadline and before `queue`; without it, `state()` returns `Defeated` and queue reverts.
 
 ### Phase 10: Queue
 

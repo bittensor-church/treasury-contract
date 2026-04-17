@@ -310,8 +310,72 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
     log "Phase 3: SKIPPED (stake already applied)"
 else
     log "Phase 3: Stake $STAKE_AMOUNT TAO"
-    btcli_cmd stake add --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
-        --amount "$STAKE_AMOUNT" --netuid "$NETUID" --no-prompt --unsafe 2>&1 | tail -2
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" stake-add \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --coldkey-uri "$ALICE_COLDKEY_SEED" \
+        --hotkey-ss58 "$HOTKEY_SS58" \
+        --netuid "$NETUID" \
+        --amount "$STAKE_AMOUNT" 2>&1 | sed 's/^/  /'
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 3b: Enable voting-power tracking + grant ValidatorPermit
+# On a fresh subnet VotingPowerTrackingEnabled=false (→ precompile 0x80D returns
+# 0 and every finalize() ends Defeated) and the EMA alpha is 2-week-slow. Both
+# need to be flipped via sudo before the validator's first weight submission.
+# The self-weight (uids=[self_uid] weights=[1]) bypasses the permit check and
+# after one tempo writes ValidatorPermit[netuid,self_uid]=true — required for
+# non-self-weights in Phase 6c.
+# ═════════════════════════════════════════════════════════════════════════════
+
+if [[ "$REUSE_SETUP" == "1" ]]; then
+    log "Phase 3b: SKIPPED (permit from cache run)"
+else
+    log "Phase 3b: Enable tracking + grant ValidatorPermit to $VALIDATOR_HOTKEY_NAME"
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" enable-voting-power-tracking \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-voting-power-ema-alpha \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+        --alpha 500000000000000000 2>&1 | sed 's/^/  /'
+
+    VALIDATOR_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" --hotkey "$HOTKEY_SS58" 2>/dev/null || echo "")
+    [[ -z "$VALIDATOR_UID" ]] && fail "Could not resolve UID for $HOTKEY_SS58 on netuid $NETUID"
+    ok "Validator UID: $VALIDATOR_UID"
+
+    HOTKEY_FILE_EARLY="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
+    HOTKEY_MNEMONIC_EARLY=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE_EARLY'))['secretPhrase'])")
+
+    set +e
+    SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --hotkey-uri "$HOTKEY_MNEMONIC_EARLY" \
+        --netuid "$NETUID" \
+        --uids "$VALIDATOR_UID" \
+        --weights 1 2>&1)
+    SW_STATUS=$?
+    set -e
+    echo "$SW_OUT" | sed 's/^/  /'
+    if [[ "$SW_STATUS" -ne 0 ]]; then
+        if echo "$SW_OUT" | grep -qi "rate limit\|SettingWeightsTooFast"; then
+            warn "set_weights rate-limited — tolerating"
+        else
+            fail "set_weights failed"
+        fi
+    else
+        ok "Self-weight set: uids=[$VALIDATOR_UID] weights=[1]"
+    fi
+
+    TEMPO=$(python3 -c "from substrateinterface import SubstrateInterface; \
+si = SubstrateInterface(url='$CHAIN_ENDPOINT'); \
+print(si.query('SubtensorModule', 'Tempo', [$NETUID]).value)")
+    log "Waiting $((TEMPO + 2)) blocks for epoch (grants ValidatorPermit + updates VotingPower; tempo=$TEMPO)"
+    wait_blocks $((TEMPO + 2))
 fi
 
 log "Phase 4: Associate EVM → hotkey"
@@ -455,14 +519,14 @@ if [[ -z "$VAULT_UID" ]]; then
 fi
 ok "Vault UID on netuid=$NETUID: $VAULT_UID"
 
+# Non-self-weight — requires ValidatorPermit granted in Phase 3b.
 set +e
-SW_OUT=$(python3 "$PROJECT_ROOT/tools/set_weights.py" \
+SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
     --endpoint "$CHAIN_ENDPOINT" \
+    --hotkey-uri "$HOTKEY_MNEMONIC" \
     --netuid "$NETUID" \
-    --wallet-name "$ALICE_WALLET" \
-    --hotkey-name "$VALIDATOR_HOTKEY_NAME" \
     --uids "$VAULT_UID" \
-    --weights "$VAULT_UID_WEIGHT" 2>&1)
+    --weights 1 2>&1)
 SW_STATUS=$?
 set -e
 echo "$SW_OUT" | sed 's/^/  /'
@@ -473,7 +537,7 @@ if [[ "$SW_STATUS" -ne 0 ]]; then
         fail "set_weights failed"
     fi
 else
-    ok "Weights set: uid=$VAULT_UID weight=$VAULT_UID_WEIGHT"
+    ok "Weights set: uid=$VAULT_UID weights=[1]"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -552,13 +616,18 @@ python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
 # PHASE 9: Wait voting period
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 9: Wait for voting to end"
+log "Phase 9: Wait for voting to end + finalize"
 wait_blocks "$((VOTING_PERIOD + 1))"
+
+python3 "$PROJECT_ROOT/tools/finalize_proposal.py" "$GOVERNOR_ADDR" \
+    --proposal-id "$PROPOSAL_ID" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+ok "Finalize submitted"
 
 STATE_NOW=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
     --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 \
     | grep -E "^State:" | awk '{print $2}')
-ok "Post-vote state: $STATE_NOW"
+ok "Post-finalize state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
     warn "Expected Succeeded — proposal may have been Defeated."

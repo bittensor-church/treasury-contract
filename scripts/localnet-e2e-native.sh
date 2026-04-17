@@ -19,7 +19,7 @@
 #   6. Fund vault with TAO
 #   7. Propose native transfer
 #   8. Vote (For)
-#   9. Wait voting period → Succeeded
+#   9. Wait voting period + finalize → Succeeded
 #   10. Queue
 #   11. Wait minDelay
 #   12. Execute
@@ -331,6 +331,8 @@ fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 3: Stake TAO → real voting power
+# Direct SubtensorModule.add_stake (bypasses btcli's MEV-shield aggregate path
+# which is unreliable on fresh localnets).
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -338,9 +340,77 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
 else
     log "Phase 3: Stake $STAKE_AMOUNT TAO"
 
-    btcli_cmd stake add --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
-        --amount "$STAKE_AMOUNT" --netuid "$NETUID" --no-prompt --unsafe 2>&1 | tail -2
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" stake-add \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --coldkey-uri "$ALICE_COLDKEY_SEED" \
+        --hotkey-ss58 "$HOTKEY_SS58" \
+        --netuid "$NETUID" \
+        --amount "$STAKE_AMOUNT" 2>&1 | sed 's/^/  /'
     ok "Staked $STAKE_AMOUNT TAO on $VALIDATOR_HOTKEY_NAME"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 3b: Enable voting-power tracking + grant ValidatorPermit
+# On a fresh subnet:
+#   - VotingPowerTrackingEnabled defaults to false → precompile 0x80D returns 0
+#     → every finalize() sees forVotes=0, threshold=0 → Defeated. Must enable.
+#   - VotingPowerEmaAlpha defaults to 0.00357e18 (2-week e-folding) → localnet
+#     never accumulates voting power in test time. Bump to 0.5e18 for fast tests.
+#   - Validator hotkey needs to set_weights once and a tempo must pass so the
+#     epoch writes ValidatorPermit[netuid,uid]=true. uids=[self_uid] is a
+#     self-weight → bypasses the permit check on first submission.
+# Direct substrate set_weights bypasses the bittensor SDK's commit-reveal path
+# (which blocks on drand when CommitRevealWeightsEnabled was ever true).
+# ═════════════════════════════════════════════════════════════════════════════
+
+if [[ "$REUSE_SETUP" == "1" ]]; then
+    log "Phase 3b: SKIPPED (permit from cache run)"
+else
+    log "Phase 3b: Enable tracking + grant ValidatorPermit to $VALIDATOR_HOTKEY_NAME"
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" enable-voting-power-tracking \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-voting-power-ema-alpha \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+        --alpha 500000000000000000 2>&1 | sed 's/^/  /'
+
+    VALIDATOR_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" --hotkey "$HOTKEY_SS58" 2>/dev/null || echo "")
+    [[ -z "$VALIDATOR_UID" ]] && fail "Could not resolve UID for $HOTKEY_SS58 on netuid $NETUID"
+    ok "Validator UID: $VALIDATOR_UID"
+
+    HOTKEY_FILE="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
+    HOTKEY_MNEMONIC=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE'))['secretPhrase'])")
+
+    set +e
+    SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --hotkey-uri "$HOTKEY_MNEMONIC" \
+        --netuid "$NETUID" \
+        --uids "$VALIDATOR_UID" \
+        --weights 1 2>&1)
+    SW_STATUS=$?
+    set -e
+    echo "$SW_OUT" | sed 's/^/  /'
+    if [[ "$SW_STATUS" -ne 0 ]]; then
+        if echo "$SW_OUT" | grep -qi "rate limit\|SettingWeightsTooFast"; then
+            warn "set_weights rate-limited — tolerating"
+        else
+            fail "set_weights failed"
+        fi
+    else
+        ok "Weights set: uids=[$VALIDATOR_UID] weights=[1]"
+    fi
+
+    TEMPO=$(python3 -c "from substrateinterface import SubstrateInterface; \
+si = SubstrateInterface(url='$CHAIN_ENDPOINT'); \
+print(si.query('SubtensorModule', 'Tempo', [$NETUID]).value)")
+    log "Waiting $((TEMPO + 2)) blocks for epoch (grants ValidatorPermit + updates VotingPower; tempo=$TEMPO)"
+    wait_blocks $((TEMPO + 2))
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -484,13 +554,19 @@ python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
 # PHASE 9: Wait voting period → Succeeded
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 9: Wait for voting to end"
+log "Phase 9: Wait for voting to end + finalize"
 wait_blocks "$((VOTING_PERIOD + 1))"
+
+python3 "$PROJECT_ROOT/tools/finalize_proposal.py" "$GOVERNOR_ADDR" \
+    --proposal-id "$PROPOSAL_ID" \
+    --rpc-url "$RPC_URL" \
+    --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+ok "Finalize submitted"
 
 STATE_NOW=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
     --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 \
     | grep -E "^State:" | awk '{print $2}')
-ok "Post-vote state: $STATE_NOW"
+ok "Post-finalize state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
     warn "Expected Succeeded — proposal may have been Defeated due to zero voting power."

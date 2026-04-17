@@ -202,9 +202,20 @@ python3 tools/get_proposal_state.py $GOVERNOR \
 
 **Note:** This is a read-only query and does not require `--private-key`.
 
-### 4. Queue — `queue_proposal.py`
+### 4. Finalize — `finalize_proposal.py`
 
-Once the voting period ends and the proposal succeeds, move it to the Timelock queue. **You must pass the exact same parameters** (type, amount, recipient, description, etc.) that were used to create the proposal.
+Once the voting period ends, call `finalize` to snapshot the outcome (For-votes vs quorum threshold) into storage. Permissionless — any address may call. Must run after the deadline and before `queue`; without it, `state()` returns `Defeated` and queue reverts. Idempotent — a second call reverts with `AlreadyFinalized`.
+
+```bash
+python3 tools/finalize_proposal.py $GOVERNOR \
+    --proposal-id <PROPOSAL_ID> \
+    --rpc-url $RPC_URL \
+    --private-key $PRIVATE_KEY
+```
+
+### 5. Queue — `queue_proposal.py`
+
+Once the proposal is finalized as passed, move it to the Timelock queue. **You must pass the exact same parameters** (type, amount, recipient, description, etc.) that were used to create the proposal.
 
 ```bash
 python3 tools/queue_proposal.py $GOVERNOR \
@@ -216,7 +227,7 @@ python3 tools/queue_proposal.py $GOVERNOR \
     --private-key $PRIVATE_KEY
 ```
 
-### 5. Execute — `execute_proposal.py`
+### 6. Execute — `execute_proposal.py`
 
 After the timelock delay passes, execute the transaction. **You must pass the exact same parameters** as the original proposal.
 

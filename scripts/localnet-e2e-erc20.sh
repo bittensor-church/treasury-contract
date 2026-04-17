@@ -277,6 +277,7 @@ fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 3: Stake
+# Direct SubtensorModule.add_stake (bypasses btcli's MEV-shield path).
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ "$REUSE_SETUP" == "1" ]]; then
@@ -284,9 +285,71 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
 else
     log "Phase 3: Stake $STAKE_AMOUNT TAO"
 
-    btcli_cmd stake add --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
-        --amount "$STAKE_AMOUNT" --netuid "$NETUID" --no-prompt --unsafe 2>&1 | tail -2
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" stake-add \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --coldkey-uri "$ALICE_COLDKEY_SEED" \
+        --hotkey-ss58 "$HOTKEY_SS58" \
+        --netuid "$NETUID" \
+        --amount "$STAKE_AMOUNT" 2>&1 | sed 's/^/  /'
     ok "Staked $STAKE_AMOUNT TAO on $VALIDATOR_HOTKEY_NAME"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE 3b: Enable voting-power tracking + grant ValidatorPermit
+# VotingPowerTrackingEnabled defaults to false on fresh subnets → precompile
+# 0x80D returns 0 and every finalize() ends Defeated. Must enable via sudo.
+# VotingPowerEmaAlpha default 0.00357e18 = 2-week e-folding; bump to 0.5e18 so
+# localnet accumulates voting power within one test run.
+# ═════════════════════════════════════════════════════════════════════════════
+
+if [[ "$REUSE_SETUP" == "1" ]]; then
+    log "Phase 3b: SKIPPED (permit from cache run)"
+else
+    log "Phase 3b: Enable tracking + grant ValidatorPermit to $VALIDATOR_HOTKEY_NAME"
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" enable-voting-power-tracking \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+
+    python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-voting-power-ema-alpha \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+        --alpha 500000000000000000 2>&1 | sed 's/^/  /'
+
+    VALIDATOR_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" --hotkey "$HOTKEY_SS58" 2>/dev/null || echo "")
+    [[ -z "$VALIDATOR_UID" ]] && fail "Could not resolve UID for $HOTKEY_SS58 on netuid $NETUID"
+    ok "Validator UID: $VALIDATOR_UID"
+
+    HOTKEY_FILE="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
+    HOTKEY_MNEMONIC=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE'))['secretPhrase'])")
+
+    set +e
+    SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
+        --endpoint "$CHAIN_ENDPOINT" \
+        --hotkey-uri "$HOTKEY_MNEMONIC" \
+        --netuid "$NETUID" \
+        --uids "$VALIDATOR_UID" \
+        --weights 1 2>&1)
+    SW_STATUS=$?
+    set -e
+    echo "$SW_OUT" | sed 's/^/  /'
+    if [[ "$SW_STATUS" -ne 0 ]]; then
+        if echo "$SW_OUT" | grep -qi "rate limit\|SettingWeightsTooFast"; then
+            warn "set_weights rate-limited — tolerating"
+        else
+            fail "set_weights failed"
+        fi
+    else
+        ok "Weights set: uids=[$VALIDATOR_UID] weights=[1]"
+    fi
+
+    TEMPO=$(python3 -c "from substrateinterface import SubstrateInterface; \
+si = SubstrateInterface(url='$CHAIN_ENDPOINT'); \
+print(si.query('SubtensorModule', 'Tempo', [$NETUID]).value)")
+    log "Waiting $((TEMPO + 2)) blocks for epoch (grants ValidatorPermit + updates VotingPower; tempo=$TEMPO)"
+    wait_blocks $((TEMPO + 2))
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -450,13 +513,18 @@ python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
 # PHASE 9: Wait voting period
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 9: Wait for voting to end"
+log "Phase 9: Wait for voting to end + finalize"
 wait_blocks "$((VOTING_PERIOD + 1))"
+
+python3 "$PROJECT_ROOT/tools/finalize_proposal.py" "$GOVERNOR_ADDR" \
+    --proposal-id "$PROPOSAL_ID" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_PK" 2>&1 | tail -5
+ok "Finalize submitted"
 
 STATE_NOW=$(python3 "$PROJECT_ROOT/tools/get_proposal_state.py" "$GOVERNOR_ADDR" \
     --proposal-id "$PROPOSAL_ID" --rpc-url "$RPC_URL" 2>&1 \
     | grep -E "^State:" | awk '{print $2}')
-ok "Post-vote state: $STATE_NOW"
+ok "Post-finalize state: $STATE_NOW"
 
 if [[ "$STATE_NOW" != "Succeeded" ]]; then
     warn "Expected Succeeded — proposal may have been Defeated (check voting power)."
