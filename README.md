@@ -250,8 +250,11 @@ btcli stake list --network test --ss58 <YOUR_WALLET_ADDRESS>
 
 To simplify interaction with these complex contracts, a dedicated Python toolset is provided.
 
-* **[Python Tooling & Automation Guide](tools/README.md)**: Detailed documentation for all scripts including
+* **[Python Tooling & Automation Guide](tools/README.md)** — detailed documentation for all scripts including
   proposing, voting, and managing the vault.
+* **[Local Chain E2E Tests](scripts/LOCALNETE2E.md)** — automated end-to-end shell scripts that drive the full
+  governance lifecycle (propose → vote → queue → execute) against a local Bittensor subtensor, for three proposal
+  types: native TAO, alpha stake, and ERC20.
 
 ---
 

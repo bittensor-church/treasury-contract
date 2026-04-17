@@ -180,6 +180,24 @@ Sleeps `MIN_DELAY` blocks (timelock).
 
 Reads the recipient's native balance before and after execute, asserts the delta matches the proposed amount.
 
+## Alpha-specific phases (`localnet-e2e-alpha.sh` only)
+
+Alpha transfers require the vault to actually hold alpha on a hotkey before
+governance can transfer it, which needs its own neuron + emissions.
+
+- **5b. Generate vault hotkey** — random `bytes32`, cached in the state file so re-runs reuse the same neuron.
+- **5d. Disable commit-reveal + admin-freeze-window** — `tools/subnet_admin.py disable-commit-reveal` (sudo). On a fresh localnet `commit_reveal_weights_enabled=true` and the admin-freeze-window blocks hyperparam changes late in a tempo; this flips both off so the validator can set weights directly.
+- **6a. `vault.registerNeuron(netuid, vault_hotkey)`** — burns TAO from the vault to create the `(vault_coldkey, vault_hotkey, netuid)` neuron slot. Returns the UID assigned.
+- **6c. Validator sets weight on vault's UID** — `tools/set_weights.py` from Alice's validator, pointing `weight=1.0` at the vault's UID so emissions flow there. Idempotent — tolerates the `set_weights` rate limit.
+- **6b. Wait for alpha to accumulate** — polls `IStakingV2.getStake(vault_hotkey, vault_coldkey, netuid)` until non-zero. Alpha is paid out per tempo.
+- **13 (alpha).** Verifies `getStake(vault_hotkey, destination_coldkey, netuid)` increased by the proposed amount.
+
+## ERC20-specific phases (`localnet-e2e-erc20.sh` only)
+
+- **5b. Deploy `MockERC20`** — from `test/Mocks.sol`, via `forge create`.
+- **5c. Mint tokens to vault** — vault becomes the ERC20 holder that governance will transfer from.
+- **13 (erc20).** Verifies recipient's ERC20 balance delta.
+
 ## Environment variables
 
 | Variable | Default | Description |

@@ -96,6 +96,24 @@ python3 tools/query_voting_power_precompile.py \
     --netuid 2
 ```
 
+### Subnet Admin (sudo / UID lookup) — `subnet_admin.py`
+
+Local-chain helpers via `substrate-interface`. Two subcommands:
+
+- `disable-commit-reveal` — sudo-sets `admin_freeze_window=0` and `commit_reveal_weights_enabled=false` on a netuid. Needed before the validator can call `set_weights` directly on a freshly-created local subnet. Requires a sudo-capable signer URI (defaults to `//Alice`).
+- `get-uid` — resolves a hotkey SS58 to its UID on a given netuid by querying `SubtensorModule.Uids`.
+
+```bash
+python3 tools/subnet_admin.py disable-commit-reveal \
+    --netuid 2 \
+    --endpoint ws://127.0.0.1:9944
+
+python3 tools/subnet_admin.py get-uid \
+    --netuid 2 \
+    --hotkey 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+    --endpoint ws://127.0.0.1:9944
+```
+
 ---
 
 ## Governance Workflow
@@ -264,6 +282,7 @@ python3 tools/get_voting_power.py $MOCK_VOTES \
 | `register_neuron.py` | Register hotkey on subnet via vault | Yes |
 | `associate_evm.py` | Link EVM address to Bittensor hotkey | Yes |
 | `set_weights.py` | Set validator weights on subnet | Yes (via bittensor wallet) |
+| `subnet_admin.py` | Sudo disable commit-reveal / get UID (localnet) | Yes (sudo URI, e.g. `//Alice`) |
 | `get_balance.py` | Query stake breakdown for coldkey | No |
 | `query_voting_power_precompile.py` | Query voting power via precompiles | No |
 | `propose_proposal.py` | Create a governance proposal | Yes |
