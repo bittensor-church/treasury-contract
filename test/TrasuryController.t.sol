@@ -334,20 +334,6 @@ contract TreasuryControllerTest is Test {
         controller.queueNativeTransfer(address(target), 100, desc);
     }
 
-    function test_SetProposalExpiration_Revert_ViaGeneric() public {
-        address[] memory t = new address[](1);
-        t[0] = address(controller);
-        uint256[] memory v = new uint256[](1);
-        v[0] = 0;
-        bytes[] memory c = new bytes[](1);
-        c[0] = abi.encodeWithSignature("setProposalExpirationBlocks(uint256)", 5000);
-        string memory desc = "Update Expiration";
-
-        vm.prank(voter1);
-        vm.expectRevert("Use specific propose functions");
-        controller.propose(t, v, c, desc);
-    }
-
     function test_ProposeAndVote_DifferentDescription_CreatesNewProposal() public {
         string memory desc = "Base Description";
         vm.prank(voter1);

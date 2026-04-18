@@ -50,7 +50,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     uint256 public immutable ERC20_LIMIT;
     uint256 public immutable LIMIT_RESET_PERIOD;
 
-    uint256 public proposalExpirationBlocks;
+    uint256 public immutable proposalExpirationBlocks;
 
     struct ProposalTallies {
         bytes32[] votedHotkeys;
@@ -101,10 +101,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         ALPHA_LIMIT = _alphaLimit;
         ERC20_LIMIT = _erc20Limit;
         LIMIT_RESET_PERIOD = _limitResetPeriodMinutes * 60;
-    }
-
-    function setProposalExpirationBlocks(uint256 newExpirationBlocks) external onlyGovernance {
-        proposalExpirationBlocks = newExpirationBlocks;
     }
 
     function _buildNativePayload(address recipient, uint256 amount)
