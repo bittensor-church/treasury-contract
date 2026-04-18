@@ -843,4 +843,130 @@ contract TreasuryControllerTest is Test {
         vm.expectRevert("Not a validator");
         controller.castVote(pid, 1);
     }
+
+    function _deployControllerWithThreshold(uint256 thresholdNumerator) internal returns (TreasuryController) {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tl = new TimelockController(1 days, proposers, executors, admin);
+        return new TreasuryController(
+            tl,
+            TARGET_NETUID,
+            "TreasuryDAO25",
+            7200,
+            50400,
+            0,
+            thresholdNumerator,
+            PROPOSAL_EXPIRATION_BLOCKS,
+            TAO_LIMIT,
+            ALPHA_LIMIT,
+            ERC20_LIMIT,
+            RESET_PERIOD_MINUTES
+        );
+    }
+
+    function test_Quorum25_Pass_At26Percent() public {
+        TreasuryController c25 = _deployControllerWithThreshold(2500);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+        _setupVoter(voter1, 2600, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = c25.proposeNativeTransfer(address(target), 10, "26pct");
+
+        vm.roll(block.number + c25.votingDelay() + 1);
+        vm.prank(voter1);
+        c25.castVote(pid, 1);
+
+        vm.roll(block.number + c25.votingPeriod() + 1);
+        c25.finalize(pid);
+
+        assertEq(uint256(c25.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_Quorum25_Defeated_AtExactly25Percent() public {
+        TreasuryController c25 = _deployControllerWithThreshold(2500);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+        _setupVoter(voter1, 2500, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = c25.proposeNativeTransfer(address(target), 10, "25pct exact");
+
+        vm.roll(block.number + c25.votingDelay() + 1);
+        vm.prank(voter1);
+        c25.castVote(pid, 1);
+
+        vm.roll(block.number + c25.votingPeriod() + 1);
+        c25.finalize(pid);
+
+        assertEq(uint256(c25.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Quorum25_PreFinalizeDrift_FlipsPassToDefeated() public {
+        TreasuryController c25 = _deployControllerWithThreshold(2500);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+        _setupVoter(voter1, 2600, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = c25.proposeNativeTransfer(address(target), 10, "Pre-finalize drift");
+
+        vm.roll(block.number + c25.votingDelay() + 1);
+        vm.prank(voter1);
+        c25.castVote(pid, 1);
+
+        vm.roll(block.number + c25.votingPeriod() + 1);
+
+        bytes32 key = bytes32(uint256(uint160(voter1)));
+        mockVotes.setVotingPower(TARGET_NETUID, key, 2400);
+
+        address griefer = makeAddr("griefer");
+        vm.prank(griefer);
+        c25.finalize(pid);
+
+        assertEq(uint256(c25.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Quorum50_Defeated_25Pct_For_26Pct_Against() public {
+        TreasuryController c50 = _deployControllerWithThreshold(5000);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+
+        _setupVoter(voter1, 2500, 1, true);
+        _setupVoter(voter2, 2600, 2, true);
+
+        vm.prank(voter1);
+        uint256 pid = c50.proposeNativeTransfer(address(target), 10, "50pct quorum");
+
+        vm.roll(block.number + c50.votingDelay() + 1);
+
+        vm.prank(voter1);
+        c50.castVote(pid, 1);
+
+        vm.prank(voter2);
+        vm.expectRevert(TreasuryController.InvalidVoteSupport.selector);
+        c50.castVote(pid, 0);
+
+        vm.roll(block.number + c50.votingPeriod() + 1);
+        c50.finalize(pid);
+
+        assertEq(uint256(c50.state(pid)), uint256(IGovernor.ProposalState.Defeated));
+    }
+
+    function test_Quorum25_PreFinalizeDrift_FlipsDefeatedToPass() public {
+        TreasuryController c25 = _deployControllerWithThreshold(2500);
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
+        _setupVoter(voter1, 2500, 1, true);
+
+        vm.prank(voter1);
+        uint256 pid = c25.proposeNativeTransfer(address(target), 10, "Total VP drop");
+
+        vm.roll(block.number + c25.votingDelay() + 1);
+        vm.prank(voter1);
+        c25.castVote(pid, 1);
+
+        vm.roll(block.number + c25.votingPeriod() + 1);
+
+        mockVotes.setTotalVotingPower(TARGET_NETUID, 8000);
+
+        c25.finalize(pid);
+
+        assertEq(uint256(c25.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
 }
