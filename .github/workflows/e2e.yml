@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [master]
+    branches: [master, chore/code-refactoring]
   pull_request:
   workflow_dispatch:
 
@@ -24,6 +24,7 @@ jobs:
         ports:
           - 9944:9944
           - 9945:9945
+          - 9946:9946
 
     steps:
       - uses: actions/checkout@v5
