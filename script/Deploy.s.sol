@@ -19,7 +19,7 @@ contract DeployGovernance is Script {
         uint256 votingDelayEnv = vm.envOr("VOTING_DELAY", uint256(0));
         uint256 votingPeriodEnv = vm.envOr("VOTING_PERIOD", uint256(5));
         uint256 proposalThresholdEnv = vm.envOr("PROPOSAL_THRESHOLD", uint256(0));
-        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(100));
+        uint256 quorumNumeratorEnv = vm.envOr("QUORUM_BPS", uint256(5000));
 
         uint256 taoLimit = vm.envOr("TAO_LIMIT", uint256(1000 ether));
         uint256 alphaLimit = vm.envOr("ALPHA_LIMIT", uint256(5000 ether));
@@ -40,8 +40,7 @@ contract DeployGovernance is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         address[] memory proposers = new address[](0);
-        address[] memory executors = new address[](1);
-        executors[0] = address(0);
+        address[] memory executors = new address[](0);
 
         TreasuryVault vault = new TreasuryVault(minDelay, proposers, executors, deployerAddress);
 
@@ -61,9 +60,11 @@ contract DeployGovernance is Script {
         );
 
         bytes32 proposerRole = vault.PROPOSER_ROLE();
+        bytes32 executorRole = vault.EXECUTOR_ROLE();
         bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
 
         vault.grantRole(proposerRole, address(governor));
+        vault.grantRole(executorRole, address(governor));
         vault.renounceRole(adminRole, deployerAddress);
 
         vm.stopBroadcast();

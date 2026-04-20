@@ -7,7 +7,7 @@ import {
     IUidLookup,
     IMetagraph,
     LookupItem,
-    IAlphaToken
+    IStakingV2
 } from "../src/controller/TreasuryController.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -22,13 +22,23 @@ contract MockNeuron {
     bool public shouldFail;
     mapping(uint16 => uint64) public burnCosts;
 
-    function getBurnCost(uint16 netuid) external view returns (uint64) {
-        return burnCosts[netuid];
-    }
-
-    function burnedRegister(uint16, bytes32) external payable {
+    function registerLimit(uint16 netuid, bytes32, uint64 limitPrice) external payable {
         if (shouldFail) {
-            revert("Mock: burnedRegister failed");
+            revert("Mock: registerLimit failed");
+        }
+
+        uint256 burn = burnCosts[netuid];
+        uint256 limitInWei = uint256(limitPrice) * 1e9;
+        if (burn > limitInWei) {
+            revert("Mock: burn exceeds limit");
+        }
+
+        if (burn > 0) {
+            if (msg.sender.balance < burn) {
+                revert("Mock: burn exceeds caller balance");
+            }
+            vm.deal(msg.sender, msg.sender.balance - burn);
+            vm.deal(address(this), address(this).balance + burn);
         }
     }
 
@@ -159,10 +169,22 @@ contract MockERC20 is IERC20 {
     }
 }
 
-    contract MockAlphaToken is IAlphaToken {
-        event AlphaTransferred(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount);
+    contract MockStakingV2 is IStakingV2 {
+        event StakeTransferred(
+            bytes32 destinationColdkey,
+            bytes32 hotkey,
+            uint256 originNetuid,
+            uint256 destinationNetuid,
+            uint256 amountAlpha
+        );
 
-        function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external {
-            emit AlphaTransferred(netuid, hotkey, recipient, amount);
+        function transferStake(
+            bytes32 destinationColdkey,
+            bytes32 hotkey,
+            uint256 originNetuid,
+            uint256 destinationNetuid,
+            uint256 amountAlpha
+        ) external {
+            emit StakeTransferred(destinationColdkey, hotkey, originNetuid, destinationNetuid, amountAlpha);
         }
     }

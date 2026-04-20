@@ -26,14 +26,21 @@ interface IBittensorVotes {
     function getTotalVotingPower(uint16 netuid) external view returns (uint256);
 }
 
-interface IAlphaToken {
-    function transferAlpha(uint16 netuid, bytes32 hotkey, address recipient, uint256 amount) external;
+interface IStakingV2 {
+    function transferStake(
+        bytes32 destinationColdkey,
+        bytes32 hotkey,
+        uint256 originNetuid,
+        uint256 destinationNetuid,
+        uint256 amountAlpha
+    ) external;
 }
 
 contract TreasuryController is Governor, GovernorSettings, GovernorTimelockControl {
     address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
     address constant UID_LOOKUP_ADDRESS = 0x0000000000000000000000000000000000000806;
+    address constant STAKING_V2_ADDRESS = 0x0000000000000000000000000000000000000805;
 
     uint16 public immutable TARGET_NETUID;
     uint256 public immutable SUPPORT_THRESHOLD_NUMERATOR;
@@ -43,18 +50,25 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     uint256 public immutable ERC20_LIMIT;
     uint256 public immutable LIMIT_RESET_PERIOD;
 
-    uint256 public proposalExpirationBlocks;
+    uint256 public immutable proposalExpirationBlocks;
 
     struct ProposalTallies {
         bytes32[] votedHotkeys;
-        mapping(bytes32 => uint8) hotkeySupport;
-        bool counted;
-        uint256 forVotes;
-        uint256 againstVotes;
+        mapping(bytes32 => bool) hotkeyVoted;
     }
 
     mapping(uint256 => ProposalTallies) private _proposalTallies;
     mapping(uint256 => mapping(bytes32 => uint256)) public periodSpent;
+
+    mapping(uint256 => bool) private _finalized;
+    mapping(uint256 => bool) private _passed;
+
+    event ProposalFinalized(uint256 indexed proposalId, uint256 forVotes, uint256 threshold, bool passed);
+
+    error InvalidVoteSupport();
+    error VoteBySigDisabled();
+    error NotYetFinalizable();
+    error AlreadyFinalized();
 
     modifier onlyValidator(address account) {
         require(_isValidator(account), "Not a validator");
@@ -89,10 +103,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         LIMIT_RESET_PERIOD = _limitResetPeriodMinutes * 60;
     }
 
-    function setProposalExpirationBlocks(uint256 newExpirationBlocks) external onlyGovernance {
-        proposalExpirationBlocks = newExpirationBlocks;
-    }
-
     function _buildNativePayload(address recipient, uint256 amount)
         internal
         pure
@@ -119,17 +129,26 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         calldatas[0] = abi.encodeWithSelector(IERC20.transfer.selector, recipient, amount);
     }
 
-    function _buildAlphaPayload(address target, uint16 netuid, bytes32 hotkey, address recipient, uint256 amount)
-        internal
-        pure
-        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas)
-    {
+    function _buildAlphaPayload(
+        bytes32 destinationColdkey,
+        bytes32 hotkey,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
+        uint256 amount
+    ) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) {
         targets = new address[](1);
         values = new uint256[](1);
         calldatas = new bytes[](1);
-        targets[0] = target;
+        targets[0] = STAKING_V2_ADDRESS;
         values[0] = 0;
-        calldatas[0] = abi.encodeWithSelector(IAlphaToken.transferAlpha.selector, netuid, hotkey, recipient, amount);
+        calldatas[0] = abi.encodeWithSelector(
+            IStakingV2.transferStake.selector,
+            destinationColdkey,
+            hotkey,
+            uint256(originNetuid),
+            uint256(destinationNetuid),
+            amount
+        );
     }
 
     function propose(address[] memory, uint256[] memory, bytes[] memory, string memory)
@@ -202,28 +221,30 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function proposeAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.propose(targets, values, calldatas, description);
     }
 
     function proposeAndVoteAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
@@ -254,15 +275,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function queueAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -298,16 +320,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function executeAlphaTransfer(
-        address target,
-        uint16 netuid,
+        bytes32 destinationColdkey,
         bytes32 hotkey,
-        address recipient,
+        uint16 originNetuid,
+        uint16 destinationNetuid,
         uint256 amount,
         string memory description
     ) external payable returns (uint256) {
-        _updateLimit(keccak256(abi.encode(target, netuid)), amount, ALPHA_LIMIT);
+        _updateLimit(keccak256(abi.encode("alpha", originNetuid)), amount, ALPHA_LIMIT);
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(target, netuid, hotkey, recipient, amount);
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return super.execute(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -334,7 +356,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         if (hotkeys.length == 0) return false;
 
         for (uint256 i = 0; i < hotkeys.length; i++) {
-            if (_proposalTallies[proposalId].hotkeySupport[hotkeys[i]] != 0) {
+            if (_proposalTallies[proposalId].hotkeyVoted[hotkeys[i]]) {
                 return true;
             }
         }
@@ -388,7 +410,21 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         onlyValidator(account)
         returns (uint256)
     {
+        if (support != 1) revert InvalidVoteSupport();
         return super._castVote(proposalId, account, support, reason);
+    }
+
+    function castVoteBySig(uint256, uint8, address, bytes memory) public virtual override returns (uint256) {
+        revert VoteBySigDisabled();
+    }
+
+    function castVoteWithReasonAndParamsBySig(uint256, uint8, address, string calldata, bytes memory, bytes memory)
+        public
+        virtual
+        override
+        returns (uint256)
+    {
+        revert VoteBySigDisabled();
     }
 
     function _getVotes(address account, uint256, bytes memory) internal view virtual override returns (uint256) {
@@ -405,40 +441,55 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         virtual
         override
     {
-        ProposalTallies storage tally = _proposalTallies[proposalId];
-        require(support <= 1, "Invalid vote");
+        if (support != 1) revert InvalidVoteSupport();
 
+        ProposalTallies storage tally = _proposalTallies[proposalId];
         bytes32[] memory hotkeys = getHotkeysForAddress(account);
         require(hotkeys.length > 0, "No associated hotkeys");
 
         for (uint256 i = 0; i < hotkeys.length; i++) {
             bytes32 hotkey = hotkeys[i];
-            if (tally.hotkeySupport[hotkey] == 0) {
+            if (!tally.hotkeyVoted[hotkey]) {
                 tally.votedHotkeys.push(hotkey);
-                tally.hotkeySupport[hotkey] = support + 1;
+                tally.hotkeyVoted[hotkey] = true;
             }
         }
     }
 
-    function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes, uint256 againstVotes) {
+    function _getTallyResult(uint256 proposalId) internal view returns (uint256 forVotes) {
         ProposalTallies storage tally = _proposalTallies[proposalId];
         for (uint256 i = 0; i < tally.votedHotkeys.length; i++) {
             bytes32 hotkey = tally.votedHotkeys[i];
-            uint256 weight = IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
-            uint8 support = tally.hotkeySupport[hotkey];
-            if (support == 2) forVotes += weight;
-            else if (support == 1) againstVotes += weight;
+            forVotes += IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getVotingPower(TARGET_NETUID, hotkey);
         }
     }
 
+    function finalize(uint256 proposalId) external {
+        if (_finalized[proposalId]) revert AlreadyFinalized();
+        if (clock() <= proposalDeadline(proposalId)) revert NotYetFinalizable();
+
+        uint256 forVotes = _getTallyResult(proposalId);
+        uint256 threshold =
+            (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * SUPPORT_THRESHOLD_NUMERATOR)
+                / 10000;
+        bool passed = forVotes > threshold;
+
+        _finalized[proposalId] = true;
+        _passed[proposalId] = passed;
+
+        emit ProposalFinalized(proposalId, forVotes, threshold, passed);
+    }
+
+    function isFinalized(uint256 proposalId) external view returns (bool) {
+        return _finalized[proposalId];
+    }
+
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes,) = _getTallyResult(proposalId);
-        return forVotes >= quorum(proposalSnapshot(proposalId));
+        return _finalized[proposalId] && _passed[proposalId];
     }
 
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        (uint256 forVotes,) = _getTallyResult(proposalId);
-        return forVotes >= quorum(proposalSnapshot(proposalId));
+        return _finalized[proposalId] && _passed[proposalId];
     }
 
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {
@@ -460,7 +511,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     }
 
     function COUNTING_MODE() public pure virtual override returns (string memory) {
-        return "support=bravo&quorum=for,against";
+        return "support=for&quorum=for";
     }
 
     function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) {

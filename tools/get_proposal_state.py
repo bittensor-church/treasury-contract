@@ -72,15 +72,6 @@ def main():
     except Exception as e:
         print(f"Details:    Error fetching details ({e})")
 
-    try:
-        votes = contract.functions.proposalVotes(args.proposal_id).call()
-        print("-" * 40)
-        print(f"Against:    {votes[0]}")
-        print(f"For:        {votes[1]}")
-        print(f"Abstain:    {votes[2]}")
-    except Exception:
-        pass
-
     print("-" * 40)
 
 if __name__ == "__main__":

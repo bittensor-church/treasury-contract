@@ -20,9 +20,10 @@ def main():
     parser.add_argument("--amount", required=True, type=float)
     parser.add_argument("--recipient", required=True, help="Recipient EVM or SS58 (for alpha)")
     parser.add_argument("--token", help="Token Address (ERC20 only)")
-    parser.add_argument("--staking-contract", help="Staking Address (Alpha only)")
-    parser.add_argument("--netuid", type=int, help="NetUID (Alpha only)")
-    parser.add_argument("--hotkey", help="Hotkey Hex (Alpha only)")
+    parser.add_argument("--hotkey", help="Hotkey (hex 0x.. or SS58) — Alpha only")
+    parser.add_argument("--origin-netuid", type=int, help="Origin NetUID (Alpha only)")
+    parser.add_argument("--destination-netuid", type=int,
+                        help="Destination NetUID (Alpha only, defaults to --origin-netuid)")
     add_web3_arguments(parser)
     args = parser.parse_args()
 
@@ -51,15 +52,20 @@ def main():
             args.description
         )
     elif args.type == 'alpha':
-        amount_wei = int(args.amount * 1_000_000_000)
-        recipient_bytes = decode_ss58_to_bytes32(args.recipient)
-        hotkey_bytes = parse_hotkey(args.hotkey)
+        if args.origin_netuid is None or not args.hotkey:
+            sys.exit("Error: --origin-netuid and --hotkey are required for Alpha proposals")
+
+        dest_netuid = args.destination_netuid if args.destination_netuid is not None else args.origin_netuid
+        amount_rao = int(args.amount * 1_000_000_000)
+        destination_coldkey_b32 = decode_ss58_to_bytes32(args.recipient)
+        hotkey_b32 = parse_hotkey(args.hotkey)
+
         fn = governor.functions.executeAlphaTransfer(
-            w3.to_checksum_address(args.staking_contract),
-            args.netuid,
-            hotkey_bytes,
-            w3.to_checksum_address(f"0x{recipient_bytes.hex()}"),
-            amount_wei,
+            destination_coldkey_b32,
+            hotkey_b32,
+            args.origin_netuid,
+            dest_netuid,
+            amount_rao,
             args.description
         )
 

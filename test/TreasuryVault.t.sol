@@ -114,7 +114,8 @@ contract TreasuryVaultTest is Test {
     function testFuzz_RegisterNeuron_Success(uint96 sentAmount, uint64 burnAmount, uint16 netuid, bytes32 hotkey)
         public
     {
-        vm.assume(uint256(burnAmount) <= uint256(sentAmount));
+        vm.assume(uint256(sentAmount) / 1e9 <= type(uint64).max);
+        vm.assume(uint256(burnAmount) <= (uint256(sentAmount) / 1e9) * 1e9);
         vm.assume(netuid != 0);
 
         MockNeuron(NEURON_PRECOMPILE).setBurnCost(netuid, burnAmount);
@@ -155,9 +156,16 @@ contract TreasuryVaultTest is Test {
         vm.deal(user, 5 ether);
         vm.prank(user);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(TreasuryVault.InsufficientTaoForRegistration.selector, burnAmount, sentAmount)
-        );
+        vm.expectRevert(TreasuryVault.NeuronRegistrationFailed.selector);
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
+    }
+
+    function test_RegisterNeuron_LimitPriceOverflow_Revert() public {
+        uint256 sentAmount = (uint256(type(uint64).max) + 1) * 1e9;
+        vm.deal(user, sentAmount);
+        vm.prank(user);
+
+        vm.expectRevert(TreasuryVault.LimitPriceOverflow.selector);
         vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
     }
 
@@ -178,6 +186,19 @@ contract TreasuryVaultTest is Test {
         assertTrue(vault.hasRole(vault.PROPOSER_ROLE(), proposer));
         assertTrue(vault.hasRole(vault.EXECUTOR_ROLE(), executor));
         assertFalse(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), user));
+    }
+
+    function test_Timelock_AddressZeroIsNotOpenExecutor() public {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TreasuryVault fresh = new TreasuryVault(1 days, proposers, executors, admin);
+
+        assertFalse(fresh.hasRole(fresh.EXECUTOR_ROLE(), address(0)));
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        fresh.execute(address(0), 0, "", bytes32(0), bytes32(0));
     }
 
     function testFuzz_RegisterNeuron_HighValues(uint16 netuid, bytes32 hotkey) public {

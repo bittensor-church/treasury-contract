@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
 
 def get_subtensor(network: str | None, endpoint: str | None):
     if endpoint:
-        return bt.subtensor(chain_endpoint=endpoint)
+        return bt.subtensor(network=endpoint)
     return bt.subtensor(network=network or "finney")
 
 def parse_list_of_ints(csv: str) -> List[int]:
