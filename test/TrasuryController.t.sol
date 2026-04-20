@@ -156,9 +156,8 @@ contract TreasuryControllerTest is Test {
 
     function test_Propose_Alpha() public {
         vm.prank(voter1);
-        uint256 pid = controller.proposeAlphaTransfer(
-            bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Alpha Prop"
-        );
+        uint256 pid =
+            controller.proposeAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Alpha Prop");
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
     }
 

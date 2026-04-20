@@ -228,8 +228,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.propose(targets, values, calldatas, description);
     }
 
@@ -241,8 +242,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return _proposeAndVote(targets, values, calldatas, description);
     }
 
@@ -280,8 +282,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 amount,
         string memory description
     ) external returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.queue(targets, values, calldatas, keccak256(bytes(description)));
     }
 
@@ -374,7 +377,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function getHotkeysForAddress(address evmAddress) public view returns (bytes32[] memory) {
         LookupItem[] memory items =
-
             IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, evmAddress, type(uint16).max);
 
         bytes32[] memory hotkeys = new bytes32[](items.length);
@@ -416,14 +418,12 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         revert VoteBySigDisabled();
     }
 
-    function castVoteWithReasonAndParamsBySig(
-        uint256,
-        uint8,
-        address,
-        string calldata,
-        bytes memory,
-        bytes memory
-    ) public virtual override returns (uint256) {
+    function castVoteWithReasonAndParamsBySig(uint256, uint8, address, string calldata, bytes memory, bytes memory)
+        public
+        virtual
+        override
+        returns (uint256)
+    {
         revert VoteBySigDisabled();
     }
 
@@ -469,9 +469,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         if (clock() <= proposalDeadline(proposalId)) revert NotYetFinalizable();
 
         uint256 forVotes = _getTallyResult(proposalId);
-        uint256 threshold = (
-            IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * SUPPORT_THRESHOLD_NUMERATOR
-        ) / 10000;
+        uint256 threshold =
+            (IBittensorVotes(BITTENSOR_VOTES_ADDRESS).getTotalVotingPower(TARGET_NETUID) * SUPPORT_THRESHOLD_NUMERATOR)
+                / 10000;
         bool passed = forVotes > threshold;
 
         _finalized[proposalId] = true;

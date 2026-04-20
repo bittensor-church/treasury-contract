@@ -169,22 +169,22 @@ contract MockERC20 is IERC20 {
     }
 }
 
-contract MockStakingV2 is IStakingV2 {
-    event StakeTransferred(
-        bytes32 destinationColdkey,
-        bytes32 hotkey,
-        uint256 originNetuid,
-        uint256 destinationNetuid,
-        uint256 amountAlpha
-    );
+    contract MockStakingV2 is IStakingV2 {
+        event StakeTransferred(
+            bytes32 destinationColdkey,
+            bytes32 hotkey,
+            uint256 originNetuid,
+            uint256 destinationNetuid,
+            uint256 amountAlpha
+        );
 
-    function transferStake(
-        bytes32 destinationColdkey,
-        bytes32 hotkey,
-        uint256 originNetuid,
-        uint256 destinationNetuid,
-        uint256 amountAlpha
-    ) external {
-        emit StakeTransferred(destinationColdkey, hotkey, originNetuid, destinationNetuid, amountAlpha);
+        function transferStake(
+            bytes32 destinationColdkey,
+            bytes32 hotkey,
+            uint256 originNetuid,
+            uint256 destinationNetuid,
+            uint256 amountAlpha
+        ) external {
+            emit StakeTransferred(destinationColdkey, hotkey, originNetuid, destinationNetuid, amountAlpha);
+        }
     }
-}
