@@ -20,7 +20,7 @@ jobs:
 
     services:
       subtensor:
-        image: ghcr.io/opentensor/subtensor-localnet:devnet-ready
+        image: ghcr.io/opentensor/subtensor-localnet:devnet-ready-with-nodes
         ports:
           - 9944:9944
           - 9945:9945
