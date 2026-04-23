@@ -265,6 +265,19 @@ if [[ "$REUSE_SETUP" == "1" ]]; then
 elif [[ -n "${EXISTING_NETUID:-}" ]]; then
     log "Phase 1: Using existing subnet (netuid=$EXISTING_NETUID)"
     NETUID="$EXISTING_NETUID"
+
+    # Idempotent start_call: emissions only flow when FirstEmissionBlockNumber
+    # is set. On reused subnets this may never have been called, which results
+    # in 0 alpha regardless of weights/permits. Swallow the "already started"
+    # error so reruns don't fail here.
+    START_OUT=$(btcli_cmd subnets start --netuid "$NETUID" \
+        --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" --no-prompt 2>&1 || true)
+    if echo "$START_OUT" | grep -qiE "already|FirstEmissionBlockNumberAlreadySet"; then
+        ok "Emissions already started on netuid=$NETUID"
+    else
+        echo "$START_OUT" | tail -1
+        ok "Emissions started on netuid=$NETUID"
+    fi
 else
     log "Phase 1: Create subnet + start emissions"
     OUTPUT=$(printf '\n\n\n\n\n\n\n\n\n\n' | btcli_cmd subnets create \
@@ -544,28 +557,148 @@ fi
 # PHASE 6b: Wait for alpha to accumulate on vault's neuron
 # ═════════════════════════════════════════════════════════════════════════════
 
-log "Phase 6b: Wait $ALPHA_WAIT_BLOCKS blocks for alpha emissions"
-wait_blocks "$ALPHA_WAIT_BLOCKS"
-
-VAULT_ALPHA_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$VAULT_COLDKEY_B32" "$NETUID")
-VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO//[^0-9]/}"
-VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO:-0}"
-VAULT_ALPHA=$(python3 -c "print(int('$VAULT_ALPHA_RAO')/1e9)")
-
-ok "Vault alpha stake: $VAULT_ALPHA α ($VAULT_ALPHA_RAO RAO) on (vault_coldkey, vault_hotkey, $NETUID)"
-
 TRANSFER_RAO=$(python3 -c "print(int(float('$TRANSFER_AMOUNT_ALPHA') * 1e9))")
-if [[ "$VAULT_ALPHA_RAO" -lt "$TRANSFER_RAO" ]]; then
-    warn "Vault alpha ($VAULT_ALPHA_RAO RAO) < transfer target ($TRANSFER_RAO RAO)."
-    warn "Alpha emissions may not flow to a neuron with 0 staked TAO on its own coldkey."
-    warn "Lowering transfer amount to min(vault_alpha, target) for demo purposes..."
-    if [[ "$VAULT_ALPHA_RAO" -gt "0" ]]; then
-        TRANSFER_RAO="$VAULT_ALPHA_RAO"
-        TRANSFER_AMOUNT_ALPHA=$(python3 -c "print(int('$TRANSFER_RAO')/1e9)")
-    else
-        warn "Vault alpha is 0 — transferStake will revert. Proceeding anyway to exercise the governance flow."
-    fi
+
+# Query subnet state so we can tell the user exactly what's going on:
+#   - Tempo: epoch length in blocks
+#   - BlocksSinceLastStep: counter; next epoch fires when it reaches Tempo
+#   - FirstEmissionBlockNumber: emissions gate — if None, `subnets start` was
+#     never called and alpha will NEVER flow regardless of weights/permits
+#   - SubtokenEnabled: alpha transfer precompile gate
+read -r TEMPO BLOCKS_SINCE FEB SUBTOKEN <<<"$(python3 -c "
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+tempo = si.query('SubtensorModule', 'Tempo', [$NETUID]).value
+bsls = si.query('SubtensorModule', 'BlocksSinceLastStep', [$NETUID]).value
+feb = si.query('SubtensorModule', 'FirstEmissionBlockNumber', [$NETUID]).value
+sub = si.query('SubtensorModule', 'SubtokenEnabled', [$NETUID]).value
+print(tempo, bsls, feb if feb is not None else 'None', sub)
+")"
+BLOCKS_TO_NEXT_EPOCH=$(( TEMPO - BLOCKS_SINCE ))
+(( BLOCKS_TO_NEXT_EPOCH < 0 )) && BLOCKS_TO_NEXT_EPOCH=0
+
+ALPHA_WAIT_EPOCHS="${ALPHA_WAIT_EPOCHS:-20}"
+ALPHA_WAIT_MAX_BLOCKS="${ALPHA_WAIT_MAX_BLOCKS:-$(( BLOCKS_TO_NEXT_EPOCH + TEMPO * ALPHA_WAIT_EPOCHS ))}"
+
+log "Phase 6b: Wait for alpha emissions to reach transfer target ($TRANSFER_RAO RAO)"
+ok "tempo=$TEMPO, blocks_since_last_step=$BLOCKS_SINCE → next epoch in $BLOCKS_TO_NEXT_EPOCH blocks"
+ok "FirstEmissionBlockNumber=$FEB, SubtokenEnabled=$SUBTOKEN"
+
+if [[ "$FEB" == "None" ]]; then
+    fail "Emissions gate not open on netuid=$NETUID (FirstEmissionBlockNumber=None). Run \`btcli subnets start --netuid $NETUID\` as subnet owner and rerun."
 fi
+
+CURRENT_BLOCK=$(cast block-number --rpc-url "$RPC_URL")
+if (( CURRENT_BLOCK < FEB )); then
+    EMISSION_START_IN=$(( FEB - CURRENT_BLOCK ))
+    warn "Emissions haven't started yet: first_emission_block=$FEB, current=$CURRENT_BLOCK ($EMISSION_START_IN blocks to go)"
+    ALPHA_WAIT_MAX_BLOCKS=$(( ALPHA_WAIT_MAX_BLOCKS + EMISSION_START_IN ))
+fi
+
+# Deterministic preflight: wait for the next full epoch boundary so the
+# consensus step has absorbed Phase 6c's set_weights and re-evaluated permits,
+# then assert on-chain state is actually capable of paying alpha to the vault.
+# Without this, we would blindly poll for up to 20 epochs even if a permit or
+# weight row is structurally missing.
+WAIT_FOR_EPOCH=$(( BLOCKS_TO_NEXT_EPOCH + 2 ))
+log "Preflight: wait $WAIT_FOR_EPOCH blocks for next consensus step (tempo=$TEMPO)"
+wait_blocks "$WAIT_FOR_EPOCH"
+
+python3 - <<PY || fail "Preflight failed — see reason above; alpha will NOT flow to vault in this chain state."
+import sys
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+
+permits = si.query('SubtensorModule', 'ValidatorPermit', [$NETUID]).value or []
+v_uid, vault_uid = $VALIDATOR_UID, $VAULT_UID
+if v_uid >= len(permits):
+    print(f"  ✗ validator_uid={v_uid} out of range (len(permits)={len(permits)})", file=sys.stderr)
+    sys.exit(1)
+if not permits[v_uid]:
+    print(f"  ✗ validator at uid={v_uid} has no ValidatorPermit — consensus ignores its weights", file=sys.stderr)
+    print(f"    (fix: ensure validator has top-k stake and wait one more epoch)", file=sys.stderr)
+    sys.exit(1)
+print(f"  ✓ ValidatorPermit[uid={v_uid}] = True")
+
+weights = si.query('SubtensorModule', 'Weights', [$NETUID, v_uid]).value or []
+vault_entry = next(((u, w) for (u, w) in weights if u == vault_uid), None)
+if vault_entry is None:
+    print(f"  ✗ validator's Weights row does not include vault_uid={vault_uid}. Actual: {weights}", file=sys.stderr)
+    print(f"    (fix: rerun set_weights for vault's UID)", file=sys.stderr)
+    sys.exit(1)
+if vault_entry[1] == 0:
+    print(f"  ✗ validator's weight on vault_uid={vault_uid} is 0: {weights}", file=sys.stderr)
+    sys.exit(1)
+print(f"  ✓ Weights[validator={v_uid}] contains (vault_uid={vault_uid}, weight={vault_entry[1]})")
+PY
+ok "Preflight OK: permit granted + weights committed — emissions WILL flow on next epoch"
+
+ok "Polling up to $ALPHA_WAIT_MAX_BLOCKS blocks (~$ALPHA_WAIT_EPOCHS epochs)"
+
+POLL_START=$(cast block-number --rpc-url "$RPC_URL")
+POLL_DEADLINE=$((POLL_START + ALPHA_WAIT_MAX_BLOCKS))
+VAULT_ALPHA_RAO=0
+LAST_EPOCH_LOG_BLOCK=0
+while true; do
+    VAULT_ALPHA_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$VAULT_COLDKEY_B32" "$NETUID")
+    VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO//[^0-9]/}"
+    VAULT_ALPHA_RAO="${VAULT_ALPHA_RAO:-0}"
+    CURRENT_BLOCK=$(cast block-number --rpc-url "$RPC_URL")
+    if [[ "$VAULT_ALPHA_RAO" -ge "$TRANSFER_RAO" ]]; then
+        ok "Alpha target reached at block $CURRENT_BLOCK: $VAULT_ALPHA_RAO RAO ≥ $TRANSFER_RAO RAO"
+        break
+    fi
+    if [[ "$CURRENT_BLOCK" -ge "$POLL_DEADLINE" ]]; then
+        # Diagnostic dump before failing — tells the user WHY no alpha flowed.
+        warn "=== Post-mortem diagnostics ==="
+        python3 - <<PY || true
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+feb = si.query('SubtensorModule', 'FirstEmissionBlockNumber', [$NETUID]).value
+sub = si.query('SubtensorModule', 'SubtokenEnabled', [$NETUID]).value
+print(f"  FirstEmissionBlockNumber[$NETUID] = {feb}")
+print(f"  SubtokenEnabled[$NETUID]         = {sub}")
+try:
+    total_alpha = si.query('SubtensorModule', 'TotalHotkeyAlpha', ['$VAULT_NEURON_HOTKEY_B32', $NETUID]).value
+    print(f"  TotalHotkeyAlpha[vault_hk,$NETUID] = {total_alpha} RAO")
+except Exception as e:
+    print(f"  TotalHotkeyAlpha query failed: {e}")
+try:
+    weights = si.query('SubtensorModule', 'Weights', [$NETUID, $VALIDATOR_UID]).value
+    print(f"  Weights[$NETUID][validator_uid=$VALIDATOR_UID] = {weights}")
+except Exception as e:
+    print(f"  Weights query failed: {e}")
+try:
+    permits = si.query('SubtensorModule', 'ValidatorPermit', [$NETUID]).value
+    print(f"  ValidatorPermit[$NETUID][0..{min(8,len(permits))}] = {permits[:8]} ...")
+    print(f"  Alice validator permit (uid=$VALIDATOR_UID): {permits[$VALIDATOR_UID] if $VALIDATOR_UID < len(permits) else 'OOB'}")
+except Exception as e:
+    print(f"  ValidatorPermit query failed: {e}")
+PY
+        fail "Timed out after $ALPHA_WAIT_MAX_BLOCKS blocks waiting for alpha (have $VAULT_ALPHA_RAO RAO, need $TRANSFER_RAO RAO). See diagnostics above."
+    fi
+    BLOCKS_LEFT=$(( POLL_DEADLINE - CURRENT_BLOCK ))
+
+    # Once per epoch, also log TotalHotkeyAlpha so we can distinguish
+    # "no emissions at all" from "emissions but on wrong coldkey".
+    if (( CURRENT_BLOCK - LAST_EPOCH_LOG_BLOCK >= TEMPO )); then
+        TOTAL_ALPHA=$(python3 -c "
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+try:
+    v = si.query('SubtensorModule', 'TotalHotkeyAlpha', ['$VAULT_NEURON_HOTKEY_B32', $NETUID]).value
+    print(v if v is not None else 0)
+except Exception:
+    print('?')
+" 2>/dev/null)
+        log "  block=$CURRENT_BLOCK vault_alpha=$VAULT_ALPHA_RAO RAO (target=$TRANSFER_RAO, ${BLOCKS_LEFT} blocks left, hotkey_total=$TOTAL_ALPHA) — waiting..."
+        LAST_EPOCH_LOG_BLOCK=$CURRENT_BLOCK
+    fi
+    sleep 6
+done
+
+VAULT_ALPHA=$(python3 -c "print(int('$VAULT_ALPHA_RAO')/1e9)")
+ok "Vault alpha stake: $VAULT_ALPHA α ($VAULT_ALPHA_RAO RAO) on (vault_coldkey, vault_hotkey, $NETUID)"
 
 DEST_COLDKEY_B32=$(ss58_to_b32 "$DEST_COLDKEY_SS58")
 ok "Destination coldkey: $DEST_COLDKEY_SS58 ($DEST_COLDKEY_B32)"

@@ -159,7 +159,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         revert("Use specific propose functions");
     }
 
-    function _proposeAndVote(
+    function _proposeOrVote(
         address[] memory targets,
         uint256[] memory values,
         bytes[] memory calldatas,
@@ -194,14 +194,14 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description)
+    function proposeOrVoteNativeTransfer(address recipient, uint256 amount, string memory description)
         external
         onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
             _buildNativePayload(recipient, amount);
-        return _proposeAndVote(targets, values, calldatas, description);
+        return _proposeOrVote(targets, values, calldatas, description);
     }
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
@@ -214,14 +214,14 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
+    function proposeOrVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
         onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
             _buildERC20Payload(token, recipient, amount);
-        return _proposeAndVote(targets, values, calldatas, description);
+        return _proposeOrVote(targets, values, calldatas, description);
     }
 
     function proposeAlphaTransfer(
@@ -238,7 +238,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return super.propose(targets, values, calldatas, description);
     }
 
-    function proposeAndVoteAlphaTransfer(
+    function proposeOrVoteAlphaTransfer(
         bytes32 destinationColdkey,
         bytes32 hotkey,
         uint16 originNetuid,
@@ -249,7 +249,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
             destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
         );
-        return _proposeAndVote(targets, values, calldatas, description);
+        return _proposeOrVote(targets, values, calldatas, description);
     }
 
     function queue(address[] memory, uint256[] memory, bytes[] memory, bytes32)

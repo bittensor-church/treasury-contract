@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Localnet config
 export RPC_URL="${RPC_URL:-http://localhost:9944}"
@@ -13,14 +14,19 @@ export PROPOSAL_THRESHOLD="${PROPOSAL_THRESHOLD:-0}"
 export QUORUM_BPS="${QUORUM_BPS:-100}"  # 1% for testing
 export PROPOSAL_EXPIRATION="${PROPOSAL_EXPIRATION:-1000}"
 
+export TAO_LIMIT="${TAO_LIMIT:-1000000000000000000000}"       # 1000 TAO (wei)
+export ALPHA_LIMIT="${ALPHA_LIMIT:-5000000000000000000000}"   # 5000 α (wei)
+export ERC20_LIMIT="${ERC20_LIMIT:-10000000000000000000000}"  # 10000 tokens (wei)
+export LIMIT_RESET_PERIOD_MIN="${LIMIT_RESET_PERIOD_MIN:-10080}"  # 1 week
+
 if [ -f .env ]; then
     echo "Loading variables from .env..."
     export $(grep -v '^#' .env | xargs)
 fi
 
-if [ -z "$PRIVATE_KEY" ]; then
+if [ -z "${PRIVATE_KEY:-}" ]; then
     echo "NO PRIVATE_KEY ENV SET."
-     exit 1
+    exit 1
 fi
 
 echo "--------------------------------------------------"

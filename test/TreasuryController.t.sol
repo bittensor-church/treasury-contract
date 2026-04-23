@@ -192,28 +192,28 @@ contract TreasuryControllerTest is Test {
         controller.proposeAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Prop");
     }
 
-    function test_ProposeAndVoteNative_Revert_NonValidator() public {
+    function test_ProposeOrVoteNative_Revert_NonValidator() public {
         address nonValidator = makeAddr("nonValidator");
         _setupVoter(nonValidator, 5000, 2, false);
         vm.prank(nonValidator);
         vm.expectRevert("Not a validator");
-        controller.proposeAndVoteNativeTransfer(address(target), 42, "Prop");
+        controller.proposeOrVoteNativeTransfer(address(target), 42, "Prop");
     }
 
-    function test_ProposeAndVoteERC20_Revert_NonValidator() public {
+    function test_ProposeOrVoteERC20_Revert_NonValidator() public {
         address nonValidator = makeAddr("nonValidator");
         _setupVoter(nonValidator, 5000, 2, false);
         vm.prank(nonValidator);
         vm.expectRevert("Not a validator");
-        controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), 500 ether, "Prop");
+        controller.proposeOrVoteERC20Transfer(address(mockToken), address(target), 500 ether, "Prop");
     }
 
-    function test_ProposeAndVoteAlpha_Revert_NonValidator() public {
+    function test_ProposeOrVoteAlpha_Revert_NonValidator() public {
         address nonValidator = makeAddr("nonValidator");
         _setupVoter(nonValidator, 5000, 2, false);
         vm.prank(nonValidator);
         vm.expectRevert("Not a validator");
-        controller.proposeAndVoteAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Prop");
+        controller.proposeOrVoteAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Prop");
     }
 
     function test_Revert_GenericPropose() public {
@@ -388,7 +388,7 @@ contract TreasuryControllerTest is Test {
         controller.queueNativeTransfer(address(target), 100, desc);
     }
 
-    function test_ProposeAndVote_DifferentDescription_CreatesNewProposal() public {
+    function test_ProposeOrVote_DifferentDescription_CreatesNewProposal() public {
         string memory desc = "Base Description";
         vm.prank(voter1);
         uint256 pid1 = controller.proposeNativeTransfer(address(target), 333, desc);
@@ -593,50 +593,50 @@ contract TreasuryControllerTest is Test {
         assertEq(controller.periodSpent(currentPeriod, bytes32(0)), 0);
     }
 
-    function test_ProposeAndVote_Native_Lifecycle() public {
+    function test_ProposeOrVote_Native_Lifecycle() public {
         uint256 amount = 100 ether;
         string memory desc = "P&V Native";
 
         vm.prank(voter1);
-        uint256 pid = controller.proposeAndVoteNativeTransfer(address(target), amount, desc);
+        uint256 pid = controller.proposeOrVoteNativeTransfer(address(target), amount, desc);
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
 
         _rollToActive();
 
         vm.prank(voter1);
-        controller.proposeAndVoteNativeTransfer(address(target), amount, desc);
+        controller.proposeOrVoteNativeTransfer(address(target), amount, desc);
 
         assertTrue(controller.hasVoted(pid, voter1));
     }
 
-    function test_ProposeAndVote_ERC20_Lifecycle() public {
+    function test_ProposeOrVote_ERC20_Lifecycle() public {
         uint256 amount = 100 ether;
         string memory desc = "P&V ERC20";
 
         vm.prank(voter1);
-        uint256 pid = controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), amount, desc);
+        uint256 pid = controller.proposeOrVoteERC20Transfer(address(mockToken), address(target), amount, desc);
 
         _rollToActive();
 
         vm.prank(voter1);
-        controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), amount, desc);
+        controller.proposeOrVoteERC20Transfer(address(mockToken), address(target), amount, desc);
 
         assertTrue(controller.hasVoted(pid, voter1));
     }
 
-    function test_ProposeAndVote_Alpha_Lifecycle() public {
+    function test_ProposeOrVote_Alpha_Lifecycle() public {
         uint256 amount = 100 ether;
         string memory desc = "P&V Alpha";
         bytes32 dst = bytes32("dstColdkey");
         bytes32 hk = bytes32("hk");
 
         vm.prank(voter1);
-        uint256 pid = controller.proposeAndVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
+        uint256 pid = controller.proposeOrVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
 
         _rollToActive();
 
         vm.prank(voter1);
-        controller.proposeAndVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
+        controller.proposeOrVoteAlphaTransfer(dst, hk, 1, 1, amount, desc);
 
         assertTrue(controller.hasVoted(pid, voter1));
     }

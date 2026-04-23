@@ -143,8 +143,7 @@ python3 tools/propose_proposal.py $GOVERNOR \
     --type alpha \
     --amount 100.0 \
     --recipient <SS58_ADDRESS> \
-    --staking-contract $STAKING_PRECOMPILE \
-    --netuid 285 \
+    --origin-netuid 285 \
     --hotkey <HOTKEY_HEX> \
     --description "Transfer 100 Alpha" \
     --rpc-url $RPC_URL \
@@ -165,12 +164,12 @@ python3 tools/propose_proposal.py $GOVERNOR \
 
 *Note the `Proposal ID` returned in the logs.*
 
-### 1b. Propose & Vote — `propose_and_vote_proposal.py`
+### 1b. Propose or Vote — `propose_or_vote_proposal.py`
 
-Creates a proposal and automatically casts a vote (For) in a single transaction. If the proposal already exists and is Active, it casts a vote on it instead. Same arguments as `propose_proposal.py`.
+Single entrypoint that branches on proposal state: if the proposal does not exist yet, creates it; if it exists and is Active, casts a For vote on it. Same arguments as `propose_proposal.py`. Because of the `votingDelay`, the proposer cannot both create and vote in one transaction — to record their own vote they must call this script a second time after the delay elapses. Only validators can create proposals or cast votes.
 
 ```bash
-python3 tools/propose_and_vote_proposal.py $GOVERNOR \
+python3 tools/propose_or_vote_proposal.py $GOVERNOR \
     --type native \
     --amount 10.0 \
     --recipient <EVM_ADDRESS> \
@@ -296,7 +295,7 @@ python3 tools/get_voting_power.py $MOCK_VOTES \
 | `get_balance.py` | Query stake breakdown for coldkey | No |
 | `query_voting_power_precompile.py` | Query voting power via precompiles | No |
 | `propose_proposal.py` | Create a governance proposal | Yes |
-| `propose_and_vote_proposal.py` | Create proposal + vote atomically | Yes |
+| `propose_or_vote_proposal.py` | Create proposal on first call; vote on later call when Active | Yes |
 | `vote.py` | Cast vote on active proposal | Yes |
 | `get_proposal_state.py` | Query proposal status & votes | No |
 | `queue_proposal.py` | Queue succeeded proposal in timelock | Yes |

@@ -16,8 +16,9 @@ A custom **Governor** implementation based on OpenZeppelin, optimized for Bitten
 - **Subnet-Scoped**: Governance is targeted at a specific `netuid`, ensuring that only stakeholders relevant to that
   subnet have voting power.
 - **Adjustable Quorum**: A configurable quorum numerator allows for flexible governance thresholds.
-- **Atomic Operations**: Includes `proposeAndVote` functionality, allowing users to create a proposal and cast a vote in
-  a single transaction (or automatically vote on an existing one).
+- **Combined Entrypoint**: Includes `proposeOrVote` helpers that create a new proposal on first call and cast a vote on
+  subsequent calls once the proposal becomes Active. The proposer themselves must call it a second time (after
+  `votingDelay`) to record their own vote.
 
 ### 2. TreasuryVault (`src/vault/`)
 
@@ -147,14 +148,12 @@ transfer types via the `--type` flag: `native`, `alpha`, or `erc20`.
 
 **Alpha transfer example:**
 ```bash
-export STAKING_PRECOMPILE=0x0000000000000000000000000000000000000805
 python3 tools/propose_proposal.py $GOVERNOR \
     --type alpha \
     --hotkey $NEURON_HOT_KEY \
-    --netuid <netuid> \
+    --origin-netuid <netuid> \
     --amount <amount> \
     --recipient $RECIPIENT_ADDRESS \
-    --staking-contract $STAKING_PRECOMPILE \
     --description "Transfer v1" \
     --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY
@@ -173,8 +172,9 @@ python3 tools/propose_proposal.py $GOVERNOR \
 
 *Note the `Proposal ID` returned in the logs.*
 
-Alternatively, use `propose_and_vote_proposal.py` (same arguments) to create a proposal and
-automatically cast a For vote in a single transaction.
+Alternatively, use `propose_or_vote_proposal.py` (same arguments). On the first call it creates the proposal; called
+again by a validator once the proposal is Active it casts a For vote. Due to the `votingDelay`, the original proposer
+must invoke it a second time after the delay to record their own vote.
 
 ### Check Proposal State
 
@@ -219,10 +219,9 @@ used when creating the proposal.
 python3 tools/queue_proposal.py $GOVERNOR \
     --type alpha \
     --hotkey $NEURON_HOT_KEY \
-    --netuid <netuid> \
+    --origin-netuid <netuid> \
     --amount <amount> \
     --recipient $RECIPIENT_ADDRESS \
-    --staking-contract $STAKING_PRECOMPILE \
     --description "Transfer v1" \
     --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY
@@ -236,10 +235,9 @@ After the timelock delay passes, execute the transaction to finalize the action 
 python3 tools/execute_proposal.py $GOVERNOR \
     --type alpha \
     --hotkey $NEURON_HOT_KEY \
-    --netuid <netuid> \
+    --origin-netuid <netuid> \
     --amount <amount> \
     --recipient $RECIPIENT_ADDRESS \
-    --staking-contract $STAKING_PRECOMPILE \
     --description "Transfer v1" \
     --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY
@@ -289,7 +287,7 @@ forge test
 
 ### Deployment
 
-Use the Foundry scripts located in `script/` (e.g., `forge script script/Deployment.s.sol`).
+Use the Foundry scripts located in `script/` (e.g., `forge script script/Deploy.s.sol`).
 
 ---
 

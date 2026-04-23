@@ -13,7 +13,7 @@ from utils.tx_handler import execute_transaction
 from utils.gov_utils import decode_ss58_to_bytes32, parse_hotkey
 
 def main():
-    parser = argparse.ArgumentParser(description="Propose & Vote Typed Proposal")
+    parser = argparse.ArgumentParser(description="Propose or Vote Typed Proposal")
     parser.add_argument("governor", help="Governor Address")
     parser.add_argument("--type", required=True, choices=['native', 'alpha', 'erc20'], help="Proposal Type")
     parser.add_argument("--description", required=True, help="Proposal Description")
@@ -41,7 +41,7 @@ def main():
 
     if args.type == 'native':
         amount_wei = w3.to_wei(str(args.amount), 'ether')
-        fn = governor.functions.proposeAndVoteNativeTransfer(
+        fn = governor.functions.proposeOrVoteNativeTransfer(
             w3.to_checksum_address(args.recipient),
             amount_wei,
             args.description
@@ -52,7 +52,7 @@ def main():
             sys.exit("Error: --token is required for ERC20 proposals")
 
         amount_wei = w3.to_wei(str(args.amount), 'ether')
-        fn = governor.functions.proposeAndVoteERC20Transfer(
+        fn = governor.functions.proposeOrVoteERC20Transfer(
             w3.to_checksum_address(args.token),
             w3.to_checksum_address(args.recipient),
             amount_wei,
@@ -67,7 +67,7 @@ def main():
         recipient_bytes = decode_ss58_to_bytes32(args.recipient)
         hotkey_bytes = parse_hotkey(args.hotkey)
 
-        fn = governor.functions.proposeAndVoteAlphaTransfer(
+        fn = governor.functions.proposeOrVoteAlphaTransfer(
             w3.to_checksum_address(args.staking_contract),
             args.netuid,
             hotkey_bytes,
@@ -76,7 +76,7 @@ def main():
             args.description
         )
 
-    print(f"--- PROPOSE & VOTE: {args.type.upper()} TRANSFER ---")
+    print(f"--- PROPOSE OR VOTE: {args.type.upper()} TRANSFER ---")
     receipt = execute_transaction(w3, account, fn, force_gas_price_gwei=args.force_gas_price_gwei)
 
     try:

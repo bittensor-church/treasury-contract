@@ -35,7 +35,7 @@ def load_contract(w3: Web3, contract_address: str, artifact_path: Path):
                     {"internalType": "uint256", "name": "amount", "type": "uint256"},
                     {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "proposeAndVoteNativeTransfer",
+                "name": "proposeOrVoteNativeTransfer",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "nonpayable",
                 "type": "function"
@@ -63,7 +63,7 @@ def load_contract(w3: Web3, contract_address: str, artifact_path: Path):
                     {"internalType": "uint256", "name": "amount", "type": "uint256"},
                     {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "proposeAndVoteAlphaTransfer",
+                "name": "proposeOrVoteAlphaTransfer",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "nonpayable",
                 "type": "function"
@@ -87,7 +87,7 @@ def load_contract(w3: Web3, contract_address: str, artifact_path: Path):
                     {"internalType": "uint256", "name": "amount", "type": "uint256"},
                     {"internalType": "string", "name": "description", "type": "string"}
                 ],
-                "name": "proposeAndVoteERC20Transfer",
+                "name": "proposeOrVoteERC20Transfer",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "nonpayable",
                 "type": "function"
