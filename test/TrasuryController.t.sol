@@ -161,6 +161,61 @@ contract TreasuryControllerTest is Test {
         assertEq(uint256(controller.state(pid)), uint256(IGovernor.ProposalState.Pending));
     }
 
+    function test_ProposeNative_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeNativeTransfer(address(target), 42, "Prop");
+    }
+
+    function test_ProposeNative_Revert_NoUid() public {
+        address noUid = makeAddr("noUid");
+        vm.prank(noUid);
+        vm.expectRevert("Not a validator");
+        controller.proposeNativeTransfer(address(target), 42, "Prop");
+    }
+
+    function test_ProposeERC20_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeERC20Transfer(address(mockToken), address(target), 500 ether, "Prop");
+    }
+
+    function test_ProposeAlpha_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Prop");
+    }
+
+    function test_ProposeAndVoteNative_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeAndVoteNativeTransfer(address(target), 42, "Prop");
+    }
+
+    function test_ProposeAndVoteERC20_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeAndVoteERC20Transfer(address(mockToken), address(target), 500 ether, "Prop");
+    }
+
+    function test_ProposeAndVoteAlpha_Revert_NonValidator() public {
+        address nonValidator = makeAddr("nonValidator");
+        _setupVoter(nonValidator, 5000, 2, false);
+        vm.prank(nonValidator);
+        vm.expectRevert("Not a validator");
+        controller.proposeAndVoteAlphaTransfer(bytes32("dstColdkey"), bytes32("hotkey"), 1, 1, 100 ether, "Prop");
+    }
+
     function test_Revert_GenericPropose() public {
         address[] memory t = new address[](1);
         uint256[] memory v = new uint256[](1);

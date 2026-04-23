@@ -186,6 +186,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeNativeTransfer(address recipient, uint256 amount, string memory description)
         external
+        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -195,6 +196,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeAndVoteNativeTransfer(address recipient, uint256 amount, string memory description)
         external
+        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -204,6 +206,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
+        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -213,6 +216,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeAndVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
+        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -227,7 +231,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external returns (uint256) {
+    ) external onlyValidator(msg.sender) returns (uint256) {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
             destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
         );
@@ -241,7 +245,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external returns (uint256) {
+    ) external onlyValidator(msg.sender) returns (uint256) {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
             destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
         );
