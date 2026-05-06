@@ -67,6 +67,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     error InvalidVoteSupport();
     error VoteBySigDisabled();
+    error VoteWithParamsDisabled();
     error NotYetFinalizable();
     error AlreadyFinalized();
 
@@ -232,9 +233,8 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 amount,
         string memory description
     ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
-            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
-        );
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return super.propose(targets, values, calldatas, description);
     }
 
@@ -246,9 +246,8 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 amount,
         string memory description
     ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
-            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
-        );
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
+            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
         return _proposeOrVote(targets, values, calldatas, description);
     }
 
@@ -354,7 +353,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         return false;
     }
 
-    function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
+    function hasVoted(uint256 proposalId, address account) public view override returns (bool) {
         bytes32[] memory hotkeys = getHotkeysForAddress(account);
 
         if (hotkeys.length == 0) return false;
@@ -416,6 +415,26 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     {
         if (support != 1) revert InvalidVoteSupport();
         return super._castVote(proposalId, account, support, reason);
+    }
+
+    function _castVote(uint256 proposalId, address account, uint8 support, string memory reason, bytes memory params)
+        internal
+        virtual
+        override
+        onlyValidator(account)
+        returns (uint256)
+    {
+        if (support != 1) revert InvalidVoteSupport();
+        return super._castVote(proposalId, account, support, reason, params);
+    }
+
+    function castVoteWithReasonAndParams(uint256, uint8, string calldata, bytes memory)
+        public
+        virtual
+        override
+        returns (uint256)
+    {
+        revert VoteWithParamsDisabled();
     }
 
     function castVoteBySig(uint256, uint8, address, bytes memory) public virtual override returns (uint256) {

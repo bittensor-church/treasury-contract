@@ -479,6 +479,40 @@ contract TreasuryControllerTest is Test {
         controller.castVoteWithReasonAndParamsBySig(pid, 1, voter1, "", "", "");
     }
 
+    function test_CastVoteWithReasonAndParams_Disabled_Validator() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Params disabled");
+        _rollToActive();
+
+        vm.prank(voter1);
+        vm.expectRevert(TreasuryController.VoteWithParamsDisabled.selector);
+        controller.castVoteWithReasonAndParams(pid, 1, "reason", "");
+    }
+
+    function test_CastVoteWithReasonAndParams_Disabled_NonValidator() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Params bypass attempt");
+        _rollToActive();
+
+        address attacker = makeAddr("attacker");
+        _setupVoter(attacker, 5000, 99, false);
+
+        vm.prank(attacker);
+        vm.expectRevert(TreasuryController.VoteWithParamsDisabled.selector);
+        controller.castVoteWithReasonAndParams(pid, 1, "bypass", hex"deadbeef");
+
+        assertFalse(controller.hasVoted(pid, attacker));
+    }
+
+    function test_CastVoteWithReasonAndParams_Disabled_RandomEOA() public {
+        uint256 pid = _createNativeProposal(voter1, 10, "Random EOA bypass");
+        _rollToActive();
+
+        address random = makeAddr("random");
+
+        vm.prank(random);
+        vm.expectRevert(TreasuryController.VoteWithParamsDisabled.selector);
+        controller.castVoteWithReasonAndParams(pid, 1, "", "");
+    }
+
     function test_Proposal_Fails_QuorumNotReached_DespiteMajority() public {
         _setupVoter(voter1, 300, 1, true);
         mockVotes.setTotalVotingPower(TARGET_NETUID, 10000);
