@@ -200,6 +200,33 @@ fi
 
 log "Phase 0: Fund deployer"
 
+# Top up Alice via sudo if low (subnet burn cost grows unboundedly across runs).
+ALICE_SS58_DEV="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+ALICE_BAL_RAO=$(python3 -c "
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+print(si.query('System','Account',['$ALICE_SS58_DEV']).value['data']['free'])
+" 2>/dev/null || echo 0)
+ALICE_MIN_RAO=$((500 * 10**15))
+ALICE_TOP_RAO=$((1000 * 10**15))
+if [[ -n "$ALICE_BAL_RAO" && "$ALICE_BAL_RAO" -lt "$ALICE_MIN_RAO" ]]; then
+    warn "Alice balance low ($((ALICE_BAL_RAO / 10**9)) TAO), topping up via sudo..."
+    python3 - <<PYEOF
+from substrateinterface import SubstrateInterface, Keypair
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+alice = Keypair.create_from_uri('//Alice')
+inner = si.compose_call('Balances', 'force_set_balance',
+                        {'who': alice.ss58_address, 'new_free': $ALICE_TOP_RAO})
+sudo = si.compose_call('Sudo', 'sudo', {'call': inner})
+ext = si.create_signed_extrinsic(call=sudo, keypair=alice)
+r = si.submit_extrinsic(ext, wait_for_inclusion=True)
+print('  topup block:', r.block_hash)
+PYEOF
+    ok "Alice topped up to $((ALICE_TOP_RAO / 10**15))M TAO"
+else
+    ok "Alice balance: $((ALICE_BAL_RAO / 10**9)) TAO"
+fi
+
 DEPLOYER_BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether 2>/dev/null || echo "0")
 DEPLOYER_BAL_INT=$(python3 -c "print(int(float('$DEPLOYER_BAL')))")
 
@@ -225,11 +252,17 @@ elif [[ -n "${EXISTING_NETUID:-}" ]]; then
     ok "netuid $NETUID (existing)"
 else
     log "Phase 1: Create subnet + start emissions"
-    OUTPUT=$(printf '\n\n\n\n\n\n\n\n\n\n' | btcli_cmd subnets create \
-        --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" \
-        --no-prompt --subnet-name "treasury_e2e" 2>&1)
-    NETUID=$(echo "$OUTPUT" | sed -n 's/.*netuid: \([0-9]*\).*/\1/p' | tail -1)
-    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid"; }
+    NETUID=""
+    for attempt in 1 2 3 4 5; do
+        OUTPUT=$(printf '\n\n\n\n\n\n\n\n\n\n' | btcli_cmd subnets create \
+            --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" \
+            --no-prompt --no-mev-protection --subnet-name "treasury_e2e" 2>&1)
+        NETUID=$(echo "$OUTPUT" | sed -n 's/.*netuid: \([0-9]*\).*/\1/p' | tail -1)
+        [[ -n "$NETUID" ]] && break
+        warn "subnets create attempt $attempt failed (likely mortal-era expiry), retrying..."
+        sleep 6
+    done
+    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid after retries"; }
     ok "Created subnet netuid=$NETUID"
 
     btcli_cmd subnets start --netuid "$NETUID" \

@@ -4,24 +4,23 @@
 # ============================================================================
 #
 # Flow:
-#   Same setup as native/erc20 (REUSE_SETUP shares /tmp/treasury-e2e-state.env),
-#   plus alpha-specific phases:
-#
-#     5b. Generate vault's neuron hotkey (random bytes32, cached in state file)
-#     5d. Disable admin-freeze-window + commit_reveal_weights on netuid (localnet-only)
-#     6a. vault.registerNeuron(netuid, vault_hotkey) — burns TAO from vault,
-#         creates (vault_coldkey, vault_hotkey, netuid) neuron slot.
-#     6c. Alice's validator set_weights(uid=vault_uid, weight=1.0) so emissions
-#         flow to the vault's neuron.
+#     0.  Fund deployer + Alice
+#     1.  Create subnet + start emissions
+#     2.  Validator hotkey + register
+#     3.  Stake on validator hotkey
+#     3b. Enable voting-power tracking + grant ValidatorPermit (self-weight)
+#     4.  Associate EVM → hotkey
+#     5.  Deploy Vault + Controller
+#     5b. Generate vault's neuron hotkey (random bytes32)
+#     5d. Disable commit_reveal_weights on netuid (localnet-only)
+#     6.  Fund vault
+#     6a. vault.registerNeuron(netuid, vault_hotkey)
+#     6c. Validator set_weights on vault's UID
 #     6b. Wait for alpha to accumulate on (vault_coldkey, vault_hotkey, netuid)
-#         via subnet emissions, read via IStakingV2.getStake precompile.
-#     7.  propose alpha transfer (vault_coldkey → destination coldkey)
-#     8-12. vote / wait / queue / execute
-#     13. Verify delta on getStake(vault_hotkey, destination_coldkey, netuid)
+#     7-13. Propose / vote / queue / execute / verify alpha delta
 #
 # Usage:
 #   ./scripts/localnet-e2e-alpha.sh
-#   REUSE_SETUP=1 ./scripts/localnet-e2e-alpha.sh
 # ============================================================================
 
 set -euo pipefail
@@ -82,9 +81,6 @@ CAST_FLAGS="$EVM_FLAGS --gas-limit 500000"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-STATE_FILE="${STATE_FILE:-/tmp/treasury-e2e-state.env}"
-REUSE_SETUP="${REUSE_SETUP:-0}"
 
 # Bittensor StakingV2 precompile
 STAKING_V2_ADDR="0x0000000000000000000000000000000000000805"
@@ -165,16 +161,6 @@ wait_blocks() {
     done
 }
 
-update_state() {
-    local KEY="$1"
-    local VALUE="$2"
-    if [[ -f "$STATE_FILE" ]] && grep -q "^${KEY}=" "$STATE_FILE"; then
-        sed -i '' "s|^${KEY}=.*|${KEY}=${VALUE}|" "$STATE_FILE"
-    else
-        echo "${KEY}=${VALUE}" >> "$STATE_FILE"
-    fi
-}
-
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 
 log "Pre-flight"
@@ -219,29 +205,37 @@ if [[ ! -f "$PROJECT_ROOT/out/TreasuryController.sol/TreasuryController.json" ]]
     ok "Compiled"
 fi
 
-# ─── Load cached setup ───────────────────────────────────────────────────────
-
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    [[ -f "$STATE_FILE" ]] || fail "REUSE_SETUP=1 but $STATE_FILE not found — run full e2e first"
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-    : "${NETUID:?missing NETUID}"
-    : "${HOTKEY_SS58:?missing HOTKEY_SS58}"
-    : "${VAULT_ADDR:?missing VAULT_ADDR}"
-    : "${GOVERNOR_ADDR:?missing GOVERNOR_ADDR}"
-    ok "Reusing cached setup from $STATE_FILE"
-    ok "  netuid=$NETUID"
-    ok "  hotkey=$HOTKEY_SS58 (e2e_validator, staked)"
-    ok "  vault=$VAULT_ADDR"
-    ok "  governor=$GOVERNOR_ADDR"
-    [[ -n "${VAULT_NEURON_HOTKEY_B32:-}" ]] && ok "  vault_neuron_hotkey=$VAULT_NEURON_HOTKEY_B32"
-fi
-
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 0: Fund deployer
 # ═════════════════════════════════════════════════════════════════════════════
 
 log "Phase 0: Fund deployer"
+
+# Top up Alice via sudo if low (subnet burn cost grows unboundedly across runs).
+ALICE_BAL_RAO=$(python3 -c "
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+print(si.query('System','Account',['$ALICE_SS58']).value['data']['free'])
+" 2>/dev/null || echo 0)
+ALICE_MIN_RAO=$((500 * 10**15))
+ALICE_TOP_RAO=$((1000 * 10**15))
+if [[ -n "$ALICE_BAL_RAO" && "$ALICE_BAL_RAO" -lt "$ALICE_MIN_RAO" ]]; then
+    warn "Alice balance low ($((ALICE_BAL_RAO / 10**9)) TAO), topping up via sudo..."
+    python3 - <<PYEOF
+from substrateinterface import SubstrateInterface, Keypair
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+alice = Keypair.create_from_uri('//Alice')
+inner = si.compose_call('Balances', 'force_set_balance',
+                        {'who': alice.ss58_address, 'new_free': $ALICE_TOP_RAO})
+sudo = si.compose_call('Sudo', 'sudo', {'call': inner})
+ext = si.create_signed_extrinsic(call=sudo, keypair=alice)
+r = si.submit_extrinsic(ext, wait_for_inclusion=True)
+print('  topup block:', r.block_hash)
+PYEOF
+    ok "Alice topped up to $((ALICE_TOP_RAO / 10**15))M TAO"
+else
+    ok "Alice balance: $((ALICE_BAL_RAO / 10**9)) TAO"
+fi
 
 DEPLOYER_BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether 2>/dev/null || echo "0")
 DEPLOYER_BAL_INT=$(python3 -c "print(int(float('$DEPLOYER_BAL')))")
@@ -257,79 +251,57 @@ fi
 ok "Deployer balance: $(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC_URL" --ether) TAO"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 1–5 (same as native — gated by REUSE_SETUP)
+# PHASE 1–5: subnet + validator + stake + permit + EVM assoc + deploy
 # ═════════════════════════════════════════════════════════════════════════════
 
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 1: SKIPPED (REUSE_SETUP=1, netuid=$NETUID from cache)"
-elif [[ -n "${EXISTING_NETUID:-}" ]]; then
-    log "Phase 1: Using existing subnet (netuid=$EXISTING_NETUID)"
-    NETUID="$EXISTING_NETUID"
-
-    # Idempotent start_call: emissions only flow when FirstEmissionBlockNumber
-    # is set. On reused subnets this may never have been called, which results
-    # in 0 alpha regardless of weights/permits. Swallow the "already started"
-    # error so reruns don't fail here.
-    START_OUT=$(btcli_cmd subnets start --netuid "$NETUID" \
-        --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" --no-prompt 2>&1 || true)
-    if echo "$START_OUT" | grep -qiE "already|FirstEmissionBlockNumberAlreadySet"; then
-        ok "Emissions already started on netuid=$NETUID"
-    else
-        echo "$START_OUT" | tail -1
-        ok "Emissions started on netuid=$NETUID"
-    fi
-else
-    log "Phase 1: Create subnet + start emissions"
+log "Phase 1: Create subnet + start emissions"
+NETUID=""
+for attempt in 1 2 3 4 5; do
     OUTPUT=$(printf '\n\n\n\n\n\n\n\n\n\n' | btcli_cmd subnets create \
         --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" \
-        --no-prompt --subnet-name "treasury_e2e" 2>&1)
+        --no-prompt --no-mev-protection --subnet-name "treasury_e2e" 2>&1)
     NETUID=$(echo "$OUTPUT" | sed -n 's/.*netuid: \([0-9]*\).*/\1/p' | tail -1)
-    [[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid"; }
-    ok "Created subnet netuid=$NETUID"
+    [[ -n "$NETUID" ]] && break
+    warn "subnets create attempt $attempt failed (likely mortal-era expiry), retrying..."
+    sleep 6
+done
+[[ -z "$NETUID" ]] && { echo "$OUTPUT"; fail "Could not extract netuid after retries"; }
+ok "Created subnet netuid=$NETUID"
 
-    btcli_cmd subnets start --netuid "$NETUID" \
-        --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" --no-prompt 2>&1 | tail -1
-    ok "Emissions started"
+btcli_cmd subnets start --netuid "$NETUID" \
+    --wallet-name "$ALICE_WALLET" --hotkey "$ALICE_HOTKEY_NAME" --no-prompt 2>&1 | tail -1
+ok "Emissions started"
 
-    btcli_cmd sudo set --netuid "$NETUID" \
-        --wallet-name "$ALICE_WALLET" --param max_regs_per_block --value 8 --no-prompt 2>&1 | tail -1 || true
+btcli_cmd sudo set --netuid "$NETUID" \
+    --wallet-name "$ALICE_WALLET" --param max_regs_per_block --value 8 --no-prompt 2>&1 | tail -1 || true
+
+log "Phase 2: Validator hotkey"
+if [[ ! -f "$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME" ]]; then
+    btcli wallet new-hotkey --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
+        --n-words 12 --no-use-password 2>&1 | tail -1
 fi
+HOTKEY_B32=$(read_hotkey_pubkey "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
+HOTKEY_SS58=$(read_hotkey_ss58 "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
+ok "Validator hotkey SS58: $HOTKEY_SS58"
 
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 2: SKIPPED (validator hotkey from cache: $HOTKEY_SS58)"
-else
-    log "Phase 2: Validator hotkey"
-    if [[ ! -f "$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME" ]]; then
-        btcli wallet new-hotkey --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" \
-            --n-words 12 --no-use-password 2>&1 | tail -1
+for attempt in 1 2 3; do
+    REG_OUT=$(btcli_cmd subnets register --netuid "$NETUID" \
+        --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" --no-prompt 2>&1)
+    if echo "$REG_OUT" | grep -qE "Registered|Already|is already"; then
+        ok "Registered on netuid $NETUID"
+        break
     fi
-    HOTKEY_B32=$(read_hotkey_pubkey "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
-    HOTKEY_SS58=$(read_hotkey_ss58 "$ALICE_WALLET" "$VALIDATOR_HOTKEY_NAME")
-    ok "Validator hotkey SS58: $HOTKEY_SS58"
+    warn "Register attempt $attempt failed, retrying..."
+    sleep 6
+done
 
-    for attempt in 1 2 3; do
-        REG_OUT=$(btcli_cmd subnets register --netuid "$NETUID" \
-            --wallet-name "$ALICE_WALLET" --hotkey "$VALIDATOR_HOTKEY_NAME" --no-prompt 2>&1)
-        if echo "$REG_OUT" | grep -qE "Registered|Already|is already"; then
-            ok "Registered on netuid $NETUID"
-            break
-        fi
-        warn "Register attempt $attempt failed, retrying..."
-        sleep 6
-    done
-fi
-
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 3: SKIPPED (stake already applied)"
-else
-    log "Phase 3: Stake $STAKE_AMOUNT TAO"
-    python3 "$PROJECT_ROOT/tools/subnet_admin.py" stake-add \
-        --endpoint "$CHAIN_ENDPOINT" \
-        --coldkey-uri "$ALICE_COLDKEY_SEED" \
-        --hotkey-ss58 "$HOTKEY_SS58" \
-        --netuid "$NETUID" \
-        --amount "$STAKE_AMOUNT" 2>&1 | sed 's/^/  /'
-fi
+log "Phase 3: Stake $STAKE_AMOUNT TAO"
+python3 "$PROJECT_ROOT/tools/subnet_admin.py" stake-add \
+    --endpoint "$CHAIN_ENDPOINT" \
+    --coldkey-uri "$ALICE_COLDKEY_SEED" \
+    --hotkey-ss58 "$HOTKEY_SS58" \
+    --netuid "$NETUID" \
+    --amount "$STAKE_AMOUNT" 2>&1 | sed 's/^/  /'
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 3b: Enable voting-power tracking + grant ValidatorPermit
@@ -341,55 +313,51 @@ fi
 # non-self-weights in Phase 6c.
 # ═════════════════════════════════════════════════════════════════════════════
 
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 3b: SKIPPED (permit from cache run)"
-else
-    log "Phase 3b: Enable tracking + grant ValidatorPermit to $VALIDATOR_HOTKEY_NAME"
+log "Phase 3b: Enable tracking + grant ValidatorPermit to $VALIDATOR_HOTKEY_NAME"
 
-    python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
-        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+python3 "$PROJECT_ROOT/tools/subnet_admin.py" disable-commit-reveal \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
 
-    python3 "$PROJECT_ROOT/tools/subnet_admin.py" enable-voting-power-tracking \
-        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
+python3 "$PROJECT_ROOT/tools/subnet_admin.py" enable-voting-power-tracking \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" 2>&1 | sed 's/^/  /'
 
-    python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-voting-power-ema-alpha \
-        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
-        --alpha 500000000000000000 2>&1 | sed 's/^/  /'
+python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-voting-power-ema-alpha \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+    --alpha 500000000000000000 2>&1 | sed 's/^/  /'
 
-    VALIDATOR_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
-        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" --hotkey "$HOTKEY_SS58" 2>/dev/null || echo "")
-    [[ -z "$VALIDATOR_UID" ]] && fail "Could not resolve UID for $HOTKEY_SS58 on netuid $NETUID"
-    ok "Validator UID: $VALIDATOR_UID"
+VALIDATOR_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" --hotkey "$HOTKEY_SS58" 2>/dev/null || echo "")
+[[ -z "$VALIDATOR_UID" ]] && fail "Could not resolve UID for $HOTKEY_SS58 on netuid $NETUID"
+ok "Validator UID: $VALIDATOR_UID"
 
-    HOTKEY_FILE_EARLY="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
-    HOTKEY_MNEMONIC_EARLY=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE_EARLY'))['secretPhrase'])")
+HOTKEY_FILE_EARLY="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
+HOTKEY_MNEMONIC_EARLY=$(python3 -c "import json; print(json.load(open('$HOTKEY_FILE_EARLY'))['secretPhrase'])")
 
-    set +e
-    SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
-        --endpoint "$CHAIN_ENDPOINT" \
-        --hotkey-uri "$HOTKEY_MNEMONIC_EARLY" \
-        --netuid "$NETUID" \
-        --uids "$VALIDATOR_UID" \
-        --weights 1 2>&1)
-    SW_STATUS=$?
-    set -e
-    echo "$SW_OUT" | sed 's/^/  /'
-    if [[ "$SW_STATUS" -ne 0 ]]; then
-        if echo "$SW_OUT" | grep -qi "rate limit\|SettingWeightsTooFast"; then
-            warn "set_weights rate-limited — tolerating"
-        else
-            fail "set_weights failed"
-        fi
+set +e
+SW_OUT=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" set-weights \
+    --endpoint "$CHAIN_ENDPOINT" \
+    --hotkey-uri "$HOTKEY_MNEMONIC_EARLY" \
+    --netuid "$NETUID" \
+    --uids "$VALIDATOR_UID" \
+    --weights 1 2>&1)
+SW_STATUS=$?
+set -e
+echo "$SW_OUT" | sed 's/^/  /'
+if [[ "$SW_STATUS" -ne 0 ]]; then
+    if echo "$SW_OUT" | grep -qi "rate limit\|SettingWeightsTooFast"; then
+        warn "set_weights rate-limited — tolerating"
     else
-        ok "Self-weight set: uids=[$VALIDATOR_UID] weights=[1]"
+        fail "set_weights failed"
     fi
+else
+    ok "Self-weight set: uids=[$VALIDATOR_UID] weights=[1]"
+fi
 
-    TEMPO=$(python3 -c "from substrateinterface import SubstrateInterface; \
+TEMPO=$(python3 -c "from substrateinterface import SubstrateInterface; \
 si = SubstrateInterface(url='$CHAIN_ENDPOINT'); \
 print(si.query('SubtensorModule', 'Tempo', [$NETUID]).value)")
-    log "Waiting $((TEMPO + 2)) blocks for epoch (grants ValidatorPermit + updates VotingPower; tempo=$TEMPO)"
-    wait_blocks $((TEMPO + 2))
-fi
+log "Waiting $((TEMPO + 2)) blocks for epoch (grants ValidatorPermit + updates VotingPower; tempo=$TEMPO)"
+wait_blocks $((TEMPO + 2))
 
 log "Phase 4: Associate EVM → hotkey"
 HOTKEY_FILE="$ALICE_DIR/hotkeys/$VALIDATOR_HOTKEY_NAME"
@@ -409,50 +377,29 @@ else
     echo "$ASSOCIATE_OUTPUT" | tail -6
 fi
 
-if [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 5: SKIPPED (vault=$VAULT_ADDR, governor=$GOVERNOR_ADDR from cache)"
-    VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
-else
-    log "Phase 5: Deploy Vault + Controller"
-    export PRIVATE_KEY="$DEPLOYER_PK"
-    export NETUID="$NETUID"
-    DEPLOY_OUT=$(cd "$PROJECT_ROOT" && forge script script/Deploy.s.sol:DeployGovernance \
-        --rpc-url "$RPC_URL" --broadcast --legacy -vv 2>&1)
-    VAULT_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Vault deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
-    GOVERNOR_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Governor deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
-    [[ -z "$VAULT_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse vault"; }
-    [[ -z "$GOVERNOR_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse governor"; }
-    ok "Vault:    $VAULT_ADDR"
-    ok "Governor: $GOVERNOR_ADDR"
-    VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
-
-    cat > "$STATE_FILE" <<EOF
-# Auto-generated by localnet-e2e scripts — re-run with REUSE_SETUP=1 to reuse.
-NETUID=$NETUID
-HOTKEY_B32=$HOTKEY_B32
-HOTKEY_SS58=$HOTKEY_SS58
-VAULT_ADDR=$VAULT_ADDR
-VAULT_SS58=$VAULT_SS58
-GOVERNOR_ADDR=$GOVERNOR_ADDR
-EOF
-    ok "Saved setup state → $STATE_FILE"
-fi
+log "Phase 5: Deploy Vault + Controller"
+export PRIVATE_KEY="$DEPLOYER_PK"
+export NETUID="$NETUID"
+DEPLOY_OUT=$(cd "$PROJECT_ROOT" && forge script script/Deploy.s.sol:DeployGovernance \
+    --rpc-url "$RPC_URL" --broadcast --legacy -vv 2>&1)
+VAULT_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Vault deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
+GOVERNOR_ADDR=$(echo "$DEPLOY_OUT" | grep -E "Governor deployed at:" | sed -n 's/.*\(0x[0-9a-fA-F]\{40\}\).*/\1/p' | head -1)
+[[ -z "$VAULT_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse vault"; }
+[[ -z "$GOVERNOR_ADDR" ]] && { echo "$DEPLOY_OUT" | tail -30; fail "parse governor"; }
+ok "Vault:    $VAULT_ADDR"
+ok "Governor: $GOVERNOR_ADDR"
+VAULT_SS58=$(h160_to_ss58 "$VAULT_ADDR")
 
 VAULT_COLDKEY_B32=$(h160_to_b32 "$VAULT_ADDR")
 ok "Vault coldkey bytes32: $VAULT_COLDKEY_B32"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 5b: Generate vault's neuron hotkey (cached per setup)
+# PHASE 5b: Generate vault's neuron hotkey
 # ═════════════════════════════════════════════════════════════════════════════
 
-if [[ -n "${VAULT_NEURON_HOTKEY_B32:-}" ]] && [[ "$REUSE_SETUP" == "1" ]]; then
-    log "Phase 5b: SKIPPED (vault_neuron_hotkey from cache: $VAULT_NEURON_HOTKEY_B32)"
-else
-    log "Phase 5b: Generate vault neuron hotkey (fresh bytes32)"
-    VAULT_NEURON_HOTKEY_B32=$(python3 -c "import secrets; print('0x' + secrets.token_hex(32))")
-    ok "Vault neuron hotkey: $VAULT_NEURON_HOTKEY_B32"
-    update_state "VAULT_NEURON_HOTKEY_B32" "$VAULT_NEURON_HOTKEY_B32"
-fi
+log "Phase 5b: Generate vault neuron hotkey (fresh bytes32)"
+VAULT_NEURON_HOTKEY_B32=$(python3 -c "import secrets; print('0x' + secrets.token_hex(32))")
+ok "Vault neuron hotkey: $VAULT_NEURON_HOTKEY_B32"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 5d: Disable commit-reveal on netuid (localnet only, via //Alice sudo)
@@ -494,8 +441,16 @@ EXISTING_STAKE_RAO=$(get_alpha_stake "$VAULT_NEURON_HOTKEY_B32" "$VAULT_COLDKEY_
 if [[ -n "$EXISTING_STAKE_RAO" ]] && [[ "$EXISTING_STAKE_RAO" != "0" ]]; then
     ok "Vault neuron already registered (stake=$EXISTING_STAKE_RAO RAO)"
 else
-    BURN_WEI=$(cast to-wei "$REGISTER_BURN_TAO" ether)
-    echo "  Calling vault.registerNeuron(netuid=$NETUID, hotkey=$VAULT_NEURON_HOTKEY_B32) with burn=$REGISTER_BURN_TAO TAO..."
+    BURN_RAO=$(python3 -c "
+from substrateinterface import SubstrateInterface
+si = SubstrateInterface(url='$CHAIN_ENDPOINT')
+print(si.query('SubtensorModule', 'Burn', [$NETUID]).value)
+")
+    BURN_TAO=$(python3 -c "print(int('$BURN_RAO') / 1e9)")
+    BURN_WITH_HEADROOM_RAO=$(python3 -c "print(int(int('$BURN_RAO') * 12 // 10))")
+    BURN_WEI=$(python3 -c "print(int('$BURN_WITH_HEADROOM_RAO') * 10**9)")
+    ok "On-chain Burn[$NETUID] = $BURN_RAO RAO ($BURN_TAO TAO); sending msg.value = ${BURN_WITH_HEADROOM_RAO} RAO (1.2× headroom)"
+    echo "  Calling vault.registerNeuron(netuid=$NETUID, hotkey=$VAULT_NEURON_HOTKEY_B32)..."
 
     set +e
     REG_OUT=$(cast send "$VAULT_ADDR" \
@@ -505,15 +460,14 @@ else
         --legacy --gas-price 10000000000 --gas-limit 2000000 2>&1)
     REG_STATUS=$?
     set -e
+    echo "$REG_OUT" | grep -E "status|blockNumber|transactionHash" | head -3
 
-    if [[ "$REG_STATUS" -ne 0 ]]; then
-        echo "$REG_OUT" | tail -15
-        warn "registerNeuron reverted — may already be registered or precompile error."
-        warn "Continuing so you can see downstream behavior."
-    else
-        echo "$REG_OUT" | grep -E "status|blockNumber|transactionHash" | head -3
-        ok "registerNeuron submitted"
+    REG_TX_STATUS=$(echo "$REG_OUT" | awk '$1=="status"{print $2}')
+    if [[ "$REG_STATUS" -ne 0 ]] || [[ "$REG_TX_STATUS" != "1" ]]; then
+        echo "$REG_OUT" | tail -20
+        fail "registerNeuron reverted (cli_exit=$REG_STATUS, tx_status=${REG_TX_STATUS:-?}). Check vault balance, burn cost, and netuid registration window."
     fi
+    ok "registerNeuron confirmed (tx_status=1)"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -523,9 +477,15 @@ fi
 
 log "Phase 6c: Validator set_weights on vault's UID"
 
-VAULT_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
-    --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
-    --hotkey "$VAULT_NEURON_HOTKEY_B32" 2>/dev/null || echo "")
+VAULT_UID=""
+for attempt in 1 2 3 4 5 6 7 8; do
+    VAULT_UID=$(python3 "$PROJECT_ROOT/tools/subnet_admin.py" get-uid \
+        --endpoint "$CHAIN_ENDPOINT" --netuid "$NETUID" \
+        --hotkey "$VAULT_NEURON_HOTKEY_B32" 2>/dev/null || echo "")
+    [[ -n "$VAULT_UID" ]] && break
+    warn "Vault UID not yet visible on netuid=$NETUID (registration extrinsic may still be pending), retry $attempt..."
+    sleep 6
+done
 
 if [[ -z "$VAULT_UID" ]]; then
     fail "Could not resolve vault's UID on netuid=$NETUID — registration may have failed"
@@ -600,7 +560,7 @@ fi
 # then assert on-chain state is actually capable of paying alpha to the vault.
 # Without this, we would blindly poll for up to 20 epochs even if a permit or
 # weight row is structurally missing.
-WAIT_FOR_EPOCH=$(( BLOCKS_TO_NEXT_EPOCH + 2 ))
+WAIT_FOR_EPOCH=$(( BLOCKS_TO_NEXT_EPOCH + TEMPO + 2 ))
 log "Preflight: wait $WAIT_FOR_EPOCH blocks for next consensus step (tempo=$TEMPO)"
 wait_blocks "$WAIT_FOR_EPOCH"
 
