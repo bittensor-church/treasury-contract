@@ -43,9 +43,8 @@ contract TreasuryVaultTest is Test {
         vm.expectEmit(true, true, true, true);
         emit NeuronRegistration(1, bytes32("hotkey"), user);
 
-        bool success = vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
+        vault.registerNeuron{ value: sentAmount }(1, bytes32("hotkey"));
 
-        assertTrue(success);
         assertEq(user.balance, 10 ether);
         assertEq(address(vault).balance, 0);
         assertEq(NEURON_PRECOMPILE.balance, 0);

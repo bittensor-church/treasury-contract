@@ -21,7 +21,7 @@ contract TreasuryVault is TimelockController {
         TimelockController(minDelay, proposers, executors, admin)
     { }
 
-    function registerNeuron(uint16 netuid, bytes32 hotkey) external payable returns (bool) {
+    function registerNeuron(uint16 netuid, bytes32 hotkey) external payable {
         uint256 limitRao = msg.value / 1e9;
         if (limitRao > type(uint64).max) {
             revert LimitPriceOverflow();
@@ -46,7 +46,6 @@ contract TreasuryVault is TimelockController {
         }
 
         emit NeuronRegistration(netuid, hotkey, msg.sender);
-        return true;
     }
 
     function _processRefund(address recipient, uint256 amount) private {

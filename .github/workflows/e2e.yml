@@ -14,13 +14,18 @@ env:
 
 jobs:
   e2e:
-    name: Localnet E2E
+    name: Localnet E2E (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [native, alpha, erc20]
 
     services:
       subtensor:
-        image: ghcr.io/bittensor-church/subtensor-localnet:devnet-ready
+        image: ghcr.io/opentensor/subtensor-localnet:main
         ports:
           - 9944:9944
           - 9945:9945
@@ -67,20 +72,10 @@ jobs:
           echo "Subtensor failed to start"
           exit 1
 
-      - name: Run E2E — native TAO transfer
+      - name: Run E2E suite
         run: |
-          chmod +x scripts/localnet-e2e-native.sh
-          ./scripts/localnet-e2e-native.sh
-
-      - name: Run E2E — alpha stake transfer
-        run: |
-          chmod +x scripts/localnet-e2e-alpha.sh
-          ./scripts/localnet-e2e-alpha.sh
-
-      - name: Run E2E — ERC20 transfer
-        run: |
-          chmod +x scripts/localnet-e2e-erc20.sh
-          ./scripts/localnet-e2e-erc20.sh
+          chmod +x scripts/localnet-e2e-${{ matrix.suite }}.sh
+          ./scripts/localnet-e2e-${{ matrix.suite }}.sh
 
       - name: Collect subtensor logs
         if: failure()
