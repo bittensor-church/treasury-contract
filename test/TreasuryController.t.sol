@@ -38,6 +38,8 @@ contract TreasuryControllerTest is Test {
     uint256 constant ALPHA_LIMIT = 5000 ether;
     uint256 constant ERC20_LIMIT = 10000 ether;
     uint256 constant RESET_PERIOD_MINUTES = 1440;
+    uint256 constant PROPOSAL_LIMIT_RESET_PERIOD_MINUTES = 1440;
+    uint256 constant PROPOSAL_LIMIT_PER_UID = 1000;
 
     address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
@@ -80,7 +82,9 @@ contract TreasuryControllerTest is Test {
             TAO_LIMIT,
             ALPHA_LIMIT,
             ERC20_LIMIT,
-            RESET_PERIOD_MINUTES
+            RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_PER_UID
         );
 
         vm.startPrank(admin);
@@ -934,7 +938,9 @@ contract TreasuryControllerTest is Test {
             TAO_LIMIT,
             ALPHA_LIMIT,
             ERC20_LIMIT,
-            RESET_PERIOD_MINUTES
+            RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_PER_UID
         );
     }
 
