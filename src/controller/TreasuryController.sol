@@ -199,7 +199,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeNativeTransfer(address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -209,7 +208,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeOrVoteNativeTransfer(address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -219,7 +217,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -229,7 +226,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeOrVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -244,9 +240,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.propose(targets, values, calldatas, description);
     }
 
@@ -257,9 +254,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return _proposeOrVote(targets, values, calldatas, description);
     }
 
@@ -361,13 +359,21 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         string memory description,
         address proposer
     ) internal virtual override returns (uint256) {
-        uint16[] memory uids = getUidsForAddress(proposer);
+        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, proposer, type(uint16).max);
+        require(items.length > 0, "Not a validator");
+
+        bool hasValidator = false;
         uint256 currentPeriod = block.timestamp / PROPOSAL_LIMIT_RESET_PERIOD;
-        for (uint256 i = 0; i < uids.length; i++) {
-            uint16 uid = uids[i];
+        for (uint256 i = 0; i < items.length; i++) {
+            uint16 uid = items[i].uid;
+            if (!hasValidator && IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid)) {
+                hasValidator = true;
+            }
             require(periodProposed[currentPeriod][uid] < PROPOSAL_LIMIT_PER_UID, "Proposal limit exceeded");
             periodProposed[currentPeriod][uid]++;
         }
+        require(hasValidator, "Not a validator");
+
         return super._propose(targets, values, calldatas, description, proposer);
     }
 
