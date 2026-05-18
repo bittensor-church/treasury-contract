@@ -50,6 +50,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
     uint256 public immutable ERC20_LIMIT;
     uint256 public immutable LIMIT_RESET_PERIOD;
 
+    uint256 public immutable PROPOSAL_LIMIT_RESET_PERIOD;
+    uint256 public immutable PROPOSAL_LIMIT_PER_UID;
+
     uint256 public immutable proposalExpirationBlocks;
 
     struct ProposalTallies {
@@ -59,6 +62,7 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     mapping(uint256 => ProposalTallies) private _proposalTallies;
     mapping(uint256 => mapping(bytes32 => uint256)) public periodSpent;
+    mapping(uint256 => mapping(uint16 => uint256)) public periodProposed;
 
     mapping(uint256 => bool) private _finalized;
     mapping(uint256 => bool) private _passed;
@@ -88,7 +92,9 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 _taoLimit,
         uint256 _alphaLimit,
         uint256 _erc20Limit,
-        uint256 _limitResetPeriodMinutes
+        uint256 _limitResetPeriodMinutes,
+        uint256 _proposalLimitResetPeriodMinutes,
+        uint256 _proposalLimitPerUid
     )
         Governor(_name)
         GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
@@ -98,10 +104,16 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         SUPPORT_THRESHOLD_NUMERATOR = _supportThresholdNumerator;
         proposalExpirationBlocks = _proposalExpirationBlocks;
 
+        require(_limitResetPeriodMinutes > 0, "Invalid reset period");
         TAO_LIMIT = _taoLimit;
         ALPHA_LIMIT = _alphaLimit;
         ERC20_LIMIT = _erc20Limit;
         LIMIT_RESET_PERIOD = _limitResetPeriodMinutes * 60;
+
+        require(_proposalLimitResetPeriodMinutes > 0, "Invalid proposal reset period");
+        require(_proposalLimitPerUid > 0, "Invalid proposal limit");
+        PROPOSAL_LIMIT_RESET_PERIOD = _proposalLimitResetPeriodMinutes * 60;
+        PROPOSAL_LIMIT_PER_UID = _proposalLimitPerUid;
     }
 
     function _buildNativePayload(address recipient, uint256 amount)
@@ -187,7 +199,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeNativeTransfer(address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -197,7 +208,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeOrVoteNativeTransfer(address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -207,7 +217,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -217,7 +226,6 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
 
     function proposeOrVoteERC20Transfer(address token, address recipient, uint256 amount, string memory description)
         external
-        onlyValidator(msg.sender)
         returns (uint256)
     {
         (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
@@ -232,9 +240,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return super.propose(targets, values, calldatas, description);
     }
 
@@ -245,9 +254,10 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint16 destinationNetuid,
         uint256 amount,
         string memory description
-    ) external onlyValidator(msg.sender) returns (uint256) {
-        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) =
-            _buildAlphaPayload(destinationColdkey, hotkey, originNetuid, destinationNetuid, amount);
+    ) external returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory calldatas) = _buildAlphaPayload(
+            destinationColdkey, hotkey, originNetuid, destinationNetuid, amount
+        );
         return _proposeOrVote(targets, values, calldatas, description);
     }
 
@@ -340,6 +350,31 @@ contract TreasuryController is Governor, GovernorSettings, GovernorTimelockContr
         uint256 currentPeriod = block.timestamp / LIMIT_RESET_PERIOD;
         require(periodSpent[currentPeriod][assetId] + amount <= limit, "Limit exceeded");
         periodSpent[currentPeriod][assetId] += amount;
+    }
+
+    function _propose(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description,
+        address proposer
+    ) internal virtual override returns (uint256) {
+        LookupItem[] memory items = IUidLookup(UID_LOOKUP_ADDRESS).uidLookup(TARGET_NETUID, proposer, type(uint16).max);
+        require(items.length > 0, "Not a validator");
+
+        bool hasValidator = false;
+        uint256 currentPeriod = block.timestamp / PROPOSAL_LIMIT_RESET_PERIOD;
+        for (uint256 i = 0; i < items.length; i++) {
+            uint16 uid = items[i].uid;
+            if (!hasValidator && IMetagraph(METAGRAPH_ADDRESS).getValidatorStatus(TARGET_NETUID, uid)) {
+                hasValidator = true;
+            }
+            require(periodProposed[currentPeriod][uid] < PROPOSAL_LIMIT_PER_UID, "Proposal limit exceeded");
+            periodProposed[currentPeriod][uid]++;
+        }
+        require(hasValidator, "Not a validator");
+
+        return super._propose(targets, values, calldatas, description, proposer);
     }
 
     function _isValidator(address account) internal view returns (bool) {

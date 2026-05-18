@@ -38,6 +38,8 @@ contract TreasuryControllerTest is Test {
     uint256 constant ALPHA_LIMIT = 5000 ether;
     uint256 constant ERC20_LIMIT = 10000 ether;
     uint256 constant RESET_PERIOD_MINUTES = 1440;
+    uint256 constant PROPOSAL_LIMIT_RESET_PERIOD_MINUTES = 1440;
+    uint256 constant PROPOSAL_LIMIT_PER_UID = 1000;
 
     address constant BITTENSOR_VOTES_ADDRESS = 0x000000000000000000000000000000000000080D;
     address constant METAGRAPH_ADDRESS = 0x0000000000000000000000000000000000000802;
@@ -80,7 +82,9 @@ contract TreasuryControllerTest is Test {
             TAO_LIMIT,
             ALPHA_LIMIT,
             ERC20_LIMIT,
-            RESET_PERIOD_MINUTES
+            RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_PER_UID
         );
 
         vm.startPrank(admin);
@@ -934,8 +938,41 @@ contract TreasuryControllerTest is Test {
             TAO_LIMIT,
             ALPHA_LIMIT,
             ERC20_LIMIT,
-            RESET_PERIOD_MINUTES
+            RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_PER_UID
         );
+    }
+
+    function _deployControllerWithProposalLimit(uint256 proposalLimitPerUid, uint256 proposalResetMinutes)
+        internal
+        returns (TreasuryController)
+    {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tl = new TimelockController(1 days, proposers, executors, admin);
+        TreasuryController c = new TreasuryController(
+            tl,
+            TARGET_NETUID,
+            "TreasuryDAOLimit",
+            7200,
+            50400,
+            0,
+            SUPPORT_THRESHOLD_NUMERATOR,
+            PROPOSAL_EXPIRATION_BLOCKS,
+            TAO_LIMIT,
+            ALPHA_LIMIT,
+            ERC20_LIMIT,
+            RESET_PERIOD_MINUTES,
+            proposalResetMinutes,
+            proposalLimitPerUid
+        );
+        vm.startPrank(admin);
+        tl.grantRole(tl.PROPOSER_ROLE(), address(c));
+        tl.grantRole(tl.EXECUTOR_ROLE(), address(c));
+        tl.grantRole(tl.CANCELLER_ROLE(), address(c));
+        vm.stopPrank();
+        return c;
     }
 
     function test_Quorum25_Pass_At26Percent() public {
@@ -1042,5 +1079,193 @@ contract TreasuryControllerTest is Test {
         c25.finalize(pid);
 
         assertEq(uint256(c25.state(pid)), uint256(IGovernor.ProposalState.Succeeded));
+    }
+
+    function test_ProposalLimit_AllowsUpToLimit() public {
+        TreasuryController c = _deployControllerWithProposalLimit(3, 1440);
+
+        for (uint256 i = 0; i < 3; i++) {
+            vm.prank(voter1);
+            c.proposeNativeTransfer(address(target), 10, string.concat("Prop ", vm.toString(i)));
+        }
+    }
+
+    function test_ProposalLimit_RevertsAboveLimit() public {
+        TreasuryController c = _deployControllerWithProposalLimit(2, 1440);
+
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "Prop 0");
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "Prop 1");
+
+        vm.prank(voter1);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Prop 2");
+    }
+
+    function test_ProposalLimit_ResetsAfterPeriod() public {
+        TreasuryController c = _deployControllerWithProposalLimit(1, 60);
+
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "Period1");
+
+        vm.prank(voter1);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Period1 again");
+
+        vm.warp(block.timestamp + 60 * 60 + 1);
+
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "Period2");
+    }
+
+    function test_ProposalLimit_IndependentPerUid() public {
+        TreasuryController c = _deployControllerWithProposalLimit(1, 1440);
+
+        _setupVoter(voter2, 500, 2, true);
+
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "Voter1 Prop");
+
+        vm.prank(voter2);
+        c.proposeNativeTransfer(address(target), 10, "Voter2 Prop");
+    }
+
+    function test_ProposalLimit_MultiUid_AllUidsIncremented() public {
+        TreasuryController c = _deployControllerWithProposalLimit(1, 1440);
+
+        address multiVoter = makeAddr("multiProposer");
+        mockUidLookup.setLookup(TARGET_NETUID, multiVoter, 40);
+        mockMetagraph.setHotkey(TARGET_NETUID, 40, bytes32(uint256(40)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 40, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(40)), 500);
+
+        mockUidLookup.addLookup(TARGET_NETUID, multiVoter, 41);
+        mockMetagraph.setHotkey(TARGET_NETUID, 41, bytes32(uint256(41)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 41, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(41)), 500);
+
+        vm.prank(multiVoter);
+        c.proposeNativeTransfer(address(target), 10, "Multi UID Prop");
+
+        vm.prank(multiVoter);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Multi UID Prop 2");
+    }
+
+    function test_ProposalLimit_MultiUid_BlocksIfAnyUidExhausted() public {
+        TreasuryController c = _deployControllerWithProposalLimit(2, 1440);
+
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "V1 Prop 0");
+        vm.prank(voter1);
+        c.proposeNativeTransfer(address(target), 10, "V1 Prop 1");
+
+        address multiVoter = makeAddr("multiShared");
+        mockUidLookup.setLookup(TARGET_NETUID, multiVoter, 1);
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 1, true);
+
+        mockUidLookup.addLookup(TARGET_NETUID, multiVoter, 50);
+        mockMetagraph.setHotkey(TARGET_NETUID, 50, bytes32(uint256(50)));
+        mockMetagraph.setValidatorStatus(TARGET_NETUID, 50, true);
+        mockVotes.setVotingPower(TARGET_NETUID, bytes32(uint256(50)), 500);
+
+        vm.prank(multiVoter);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Multi blocked by uid 1");
+    }
+
+    function test_ProposalLimit_ERC20_Counted() public {
+        TreasuryController c = _deployControllerWithProposalLimit(1, 1440);
+
+        vm.prank(voter1);
+        c.proposeERC20Transfer(address(mockToken), address(target), 100, "ERC20 limit");
+
+        vm.prank(voter1);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Native after ERC20");
+    }
+
+    function test_ProposalLimit_Alpha_Counted() public {
+        TreasuryController c = _deployControllerWithProposalLimit(1, 1440);
+
+        vm.prank(voter1);
+        c.proposeAlphaTransfer(bytes32("dst"), bytes32("hk"), 1, 1, 100, "Alpha limit");
+
+        vm.prank(voter1);
+        vm.expectRevert("Proposal limit exceeded");
+        c.proposeNativeTransfer(address(target), 10, "Native after Alpha");
+    }
+
+    function test_Constructor_RevertsZeroLimitResetPeriod() public {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tl = new TimelockController(1 days, proposers, executors, admin);
+
+        vm.expectRevert("Invalid reset period");
+        new TreasuryController(
+            tl,
+            TARGET_NETUID,
+            "Bad",
+            7200,
+            50400,
+            0,
+            SUPPORT_THRESHOLD_NUMERATOR,
+            PROPOSAL_EXPIRATION_BLOCKS,
+            TAO_LIMIT,
+            ALPHA_LIMIT,
+            ERC20_LIMIT,
+            0,
+            PROPOSAL_LIMIT_RESET_PERIOD_MINUTES,
+            PROPOSAL_LIMIT_PER_UID
+        );
+    }
+
+    function test_ProposalLimit_Constructor_RevertsZeroPeriod() public {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tl = new TimelockController(1 days, proposers, executors, admin);
+
+        vm.expectRevert("Invalid proposal reset period");
+        new TreasuryController(
+            tl,
+            TARGET_NETUID,
+            "Bad",
+            7200,
+            50400,
+            0,
+            SUPPORT_THRESHOLD_NUMERATOR,
+            PROPOSAL_EXPIRATION_BLOCKS,
+            TAO_LIMIT,
+            ALPHA_LIMIT,
+            ERC20_LIMIT,
+            RESET_PERIOD_MINUTES,
+            0,
+            1
+        );
+    }
+
+    function test_ProposalLimit_Constructor_RevertsZeroLimit() public {
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tl = new TimelockController(1 days, proposers, executors, admin);
+
+        vm.expectRevert("Invalid proposal limit");
+        new TreasuryController(
+            tl,
+            TARGET_NETUID,
+            "Bad",
+            7200,
+            50400,
+            0,
+            SUPPORT_THRESHOLD_NUMERATOR,
+            PROPOSAL_EXPIRATION_BLOCKS,
+            TAO_LIMIT,
+            ALPHA_LIMIT,
+            ERC20_LIMIT,
+            RESET_PERIOD_MINUTES,
+            1440,
+            0
+        );
     }
 }

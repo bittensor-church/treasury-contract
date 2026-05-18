@@ -25,6 +25,8 @@ contract DeployGovernance is Script {
         uint256 alphaLimit = vm.envOr("ALPHA_LIMIT", uint256(5000 ether));
         uint256 erc20Limit = vm.envOr("ERC20_LIMIT", uint256(10000 ether));
         uint256 resetPeriod = vm.envOr("LIMIT_RESET_PERIOD_MIN", uint256(10080)); // Default: 1 week
+        uint256 proposalResetPeriod = vm.envOr("PROPOSAL_LIMIT_RESET_PERIOD_MIN", uint256(1440)); // Default: 1 day
+        uint256 proposalLimitPerUid = vm.envOr("PROPOSAL_LIMIT_PER_UID", uint256(100));
 
         uint48 votingDelay = uint48(votingDelayEnv);
         uint32 votingPeriod = uint32(votingPeriodEnv);
@@ -36,6 +38,8 @@ contract DeployGovernance is Script {
         console.log("Alpha Limit:", alphaLimit);
         console.log("ERC20 Limit:", erc20Limit);
         console.log("Reset Period (Min):", resetPeriod);
+        console.log("Proposal Reset Period (Min):", proposalResetPeriod);
+        console.log("Proposal Limit Per UID:", proposalLimitPerUid);
 
         vm.startBroadcast(deployerPrivateKey);
 
@@ -56,7 +60,9 @@ contract DeployGovernance is Script {
             taoLimit,
             alphaLimit,
             erc20Limit,
-            resetPeriod
+            resetPeriod,
+            proposalResetPeriod,
+            proposalLimitPerUid
         );
 
         bytes32 proposerRole = vault.PROPOSER_ROLE();
